@@ -27,3 +27,32 @@ example:
 ```bash
 ./rollouts-controller --metric-plugin-location=file://./metric-plugin
 ```
+
+### Sample Analysis Template
+When configuring a AnalysisTemplate `provider.plugin.config:` can be anyhing you need it to be and it will be passed into the the plugin via the Metric struct.
+
+An example for this sample plugin below:
+```
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+spec:
+  args:
+    - name: service-name
+  metrics:
+    - name: success-rate
+      interval: 5s
+      # NOTE: prometheus queries return results in the form of a vector.
+      # So it is common to access the index 0 of the returned array to obtain the value
+      successCondition: result[0] >= 8
+      failureLimit: 2
+      count: 3
+      provider:
+        plugin:
+          config:
+            address: http://prometheus.local
+            step: 1m
+            query: |
+              machine_cpu_cores
+```
