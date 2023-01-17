@@ -28,6 +28,15 @@ example:
 ./rollouts-controller --metric-plugin-location=file://./metric-plugin
 ```
 
+or
+
+There are downsides to using a url such as having to download the binary every time the controller starts up and/or restarts. If the service hosting the binary is down
+the controller will also not be able to start which could induce downtime. To work around those we suggest hosting the plugin internally and mouting the file up via k8s
+configuration.
+```bash
+./rollouts-controller --metric-plugin-location=https://github.com/argoproj-labs/sample-rollouts-metric-plugin/releases/download/v0.0.1/metric-plugin-linux-amd64
+```
+
 ### Sample Analysis Template
 When configuring a AnalysisTemplate `provider.plugin.config:` can be anyhing you need it to be and it will be passed into the the plugin via the Metric struct.
 
