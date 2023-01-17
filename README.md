@@ -28,9 +28,9 @@ example:
 ./rollouts-controller --metric-plugin-location=file://./metric-plugin
 ```
 
-or
+or via http(s)
 
-There are downsides to using a url such as having to download the binary every time the controller starts up and/or restarts. If the service hosting the binary is down
+There are however downsides to using a url such as having to download the binary every time the controller starts up and/or restarts. If the service hosting the binary is down
 the controller will also not be able to start which could induce downtime. To work around those we suggest hosting the plugin internally and mouting the file up via k8s
 configuration.
 ```bash
