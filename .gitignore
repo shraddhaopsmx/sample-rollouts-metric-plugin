@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.dylib
+metric-plugin
 
 # Test binary, built with `go test -c`
 *.test

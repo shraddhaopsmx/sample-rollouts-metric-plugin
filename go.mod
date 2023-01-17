@@ -2,7 +2,7 @@ module github.com/argoproj-labs/sample-rollouts-metric-plugin
 
 go 1.19
 
-replace github.com/argoproj/argo-rollouts => github.com/zachaller/argo-rollouts v1.2.1-0.20230116165535-622a532777d0
+replace github.com/argoproj/argo-rollouts => github.com/zachaller/argo-rollouts v1.2.1-0.20230117002114-fc06f3ed3b83
 
 require (
 	github.com/argoproj/argo-rollouts v0.0.0-00010101000000-000000000000
