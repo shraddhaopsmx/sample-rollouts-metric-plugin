@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/argoproj/argo-rollouts/utils/plugin/types"
 	"net/url"
 	"os"
 	"time"
@@ -35,17 +36,17 @@ type Config struct {
 	Query string `json:"query,omitempty" protobuf:"bytes,2,opt,name=query"`
 }
 
-func (g *RpcPlugin) NewMetricsPlugin(metric v1alpha1.Metric) error {
+func (g *RpcPlugin) NewMetricsPlugin(metric v1alpha1.Metric) types.RpcError {
 	config := Config{}
 	err := json.Unmarshal(metric.Provider.Plugin.Config, &config)
 	if err != nil {
-		return err
+		return types.RpcError{ErrorString: err.Error()}
 	}
 
 	api, err := newPrometheusAPI(config.Address)
 	g.api = api
 
-	return err
+	return types.RpcError{}
 }
 
 func (g *RpcPlugin) Run(anaysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metric) v1alpha1.Measurement {
@@ -97,8 +98,8 @@ func (g *RpcPlugin) Terminate(analysisRun *v1alpha1.AnalysisRun, metric v1alpha1
 	return measurement
 }
 
-func (g *RpcPlugin) GarbageCollect(*v1alpha1.AnalysisRun, v1alpha1.Metric, int) error {
-	return nil
+func (g *RpcPlugin) GarbageCollect(*v1alpha1.AnalysisRun, v1alpha1.Metric, int) types.RpcError {
+	return types.RpcError{}
 }
 
 func (g *RpcPlugin) Type() string {

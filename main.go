@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/argoproj-labs/sample-rollouts-metric-plugin/internal/plugin"
-	rolloutsPlugin "github.com/argoproj/argo-rollouts/metricproviders/plugin"
+	rolloutsPlugin "github.com/argoproj/argo-rollouts/metricproviders/plugin/rpc"
 	goPlugin "github.com/hashicorp/go-plugin"
 	log "github.com/sirupsen/logrus"
 )
