@@ -2,7 +2,7 @@ module github.com/argoproj-labs/sample-rollouts-metric-plugin
 
 go 1.19
 
-replace github.com/argoproj/argo-rollouts => github.com/zachaller/argo-rollouts v1.2.1-0.20230128184225-596785791f4f
+replace github.com/argoproj/argo-rollouts => github.com/zachaller/argo-rollouts v1.2.1-0.20230130213842-58b30b1ac2aa
 
 require (
 	github.com/argoproj/argo-rollouts v0.0.0-00010101000000-000000000000
@@ -39,7 +39,7 @@ require (
 	golang.org/x/sys v0.3.0 // indirect
 	golang.org/x/text v0.5.0 // indirect
 	google.golang.org/genproto v0.0.0-20221118155620-16455021b5e6 // indirect
-	google.golang.org/grpc v1.52.0 // indirect
+	google.golang.org/grpc v1.52.3 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
