@@ -17,28 +17,56 @@ make build-sample-plugin-debug
 If using goland you can attach a debugger to the debug build by following the directions https://www.jetbrains.com/help/go/attach-to-running-go-processes-with-debugger.html
 
 You can also do this with many other debuggers as well. Including cli debuggers like delve.
+## Using a Metric Plugin
 
-### Running the plugin
-To run the plugin, you can run the following command you can start the argo rollouts controller with the plugin enabled
-by setting the `--metric-plugin-location` flag on the rollouts controller to the path of the plugin binary. The flag
-supports two schema's `file://` and `http(s)://`.
+There are two methods of installing and using an argo rollouts plugin. The first method is to mount up the plugin executable
+into the rollouts controller container. The second method is to use a HTTP(S) server to host the plugin executable.
 
-example:
-```bash
-./rollouts-controller --metric-plugin-location=file://./metric-plugin
+### Mounting the plugin executable into the rollouts controller container
+
+To use this method, you will need to build or download the plugin executable and then mount it into the rollouts controller container.
+The plugin executable must be mounted into the rollouts controller container at the path specified by the `--metric-plugin-location` flag.
+
+There are a few ways to mount the plugin executable into the rollouts controller container. Some of these will depend on your
+particular infrastructure. Here are a few methods:
+
+* Using an init container to download the plugin executable
+* Using a Kubernetes volume mount with a shared volume such as NFS, EBS, etc.
+* Building the plugin into the rollouts controller container
+
+Then you can use setup the configmap to point to the plugin executable. Example:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argo-rollouts-config
+data:
+  plugins: |-
+    metrics:
+    - name: "prometheus" # name of the plugin uses the name to find this configuration, it must match the name required by the plugin
+      pluginLocation: "file://./my-custom-plugin" # supports http(s):// urls and file://
 ```
 
-or via http(s)
+### Using a HTTP(S) server to host the plugin executable
 
-There are however downsides to using a url such as having to download the binary every time the controller starts up and/or restarts. If the service hosting the binary is down
-the controller will also not be able to start which could induce downtime. To work around those we suggest hosting the plugin internally and mouting the file up via k8s
-configuration.
-```bash
-./rollouts-controller --metric-plugin-location=https://github.com/argoproj-labs/sample-rollouts-metric-plugin/releases/download/v0.0.1/metric-plugin-linux-amd64
+Argo Rollouts supports downloading the plugin executable from a HTTP(S) server. To use this method, you will need to
+configure the controller via the `argo-rollouts-config` configmaps `pluginLocation` to an http(s) url. Example:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argo-rollouts-config
+data:
+  plugins: |-
+    metrics:
+    - name: "prometheus" # name of the plugin uses the name to find this configuration, it must match the name required by the plugin
+      pluginLocation: "https://github.com/argoproj-labs/sample-rollouts-metric-plugin/releases/download/v0.0.3/metric-plugin-linux-amd64" # supports http(s):// urls and file://
+      pluginSha256: "08f588b1c799a37bbe8d0fc74cc1b1492dd70b2c" #optional sha256 checksum of the plugin executable
 ```
 
 ### Sample Analysis Template
-When configuring a AnalysisTemplate `provider.plugin.config:` can be anyhing you need it to be and it will be passed into the the plugin via the Metric struct.
 
 An example for this sample plugin below:
 ```
@@ -59,7 +87,7 @@ spec:
       count: 3
       provider:
         plugin:
-          config:
+          prometheus:
             address: http://prometheus.local
             step: 1m
             query: |
