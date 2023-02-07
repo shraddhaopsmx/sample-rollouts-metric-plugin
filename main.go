@@ -18,7 +18,7 @@ var handshakeConfig = goPlugin.HandshakeConfig{
 }
 
 func main() {
-	logCtx := *log.WithFields(log.Fields{"plugin": "prometheus"})
+	logCtx := *log.WithFields(log.Fields{"plugin": "opsmx"})
 
 	rpcPluginImp := &plugin.RpcPlugin{
 		LogCtx: logCtx,

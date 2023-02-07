@@ -1,50 +1,67 @@
 package plugin
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/argoproj/argo-rollouts/utils/plugin/types"
+	"net/http"
 	"net/url"
-	"os"
+	"strconv"
+	"strings"
 	"time"
+
+	"github.com/argoproj/argo-rollouts/utils/plugin/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"github.com/argoproj/argo-rollouts/metricproviders/plugin"
 	"github.com/argoproj/argo-rollouts/pkg/apis/rollouts/v1alpha1"
-	"github.com/argoproj/argo-rollouts/utils/evaluate"
 	metricutil "github.com/argoproj/argo-rollouts/utils/metric"
 	timeutil "github.com/argoproj/argo-rollouts/utils/time"
-	"github.com/prometheus/client_golang/api"
-	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
-	"github.com/prometheus/common/model"
 	log "github.com/sirupsen/logrus"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-const EnvVarArgoRolloutsPrometheusAddress string = "ARGO_ROLLOUTS_PROMETHEUS_ADDRESS"
+const (
+	templateApi               = "/autopilot/api/v5/external/template?sha1=%s&templateType=%s&templateName=%s"
+	v5configIdLookupURLFormat = `/autopilot/api/v5/registerCanary`
+	scoreUrlFormat            = `/autopilot/v5/canaries/`
+	resumeAfter               = 3 * time.Second
+	defaultTimeout            = 30
+	defaultSecretName         = "opsmx-profile"
+	cdIntegrationArgoRollouts = "argorollouts"
+	cdIntegrationArgoCD       = "argocd"
+	opsmxPlugin               = "opsmx"
+)
 
 // Here is a real implementation of MetricsPlugin
 type RpcPlugin struct {
-	LogCtx log.Entry
-	api    v1.API
+	LogCtx        log.Entry
+	kubeclientset kubernetes.Interface
+	client        http.Client
 }
 
-type Config struct {
-	// Address is the HTTP address and port of the prometheus server
-	Address string `json:"address,omitempty" protobuf:"bytes,1,opt,name=address"`
-	// Query is a raw prometheus query to perform
-	Query string `json:"query,omitempty" protobuf:"bytes,2,opt,name=query"`
-}
+// type OpsmxSecret struct {
+// 	user          string
+// 	opsmxIsdUrl   string
+// 	sourceName    string
+// 	cdIntegration string
+// }
 
 func (g *RpcPlugin) NewMetricsPlugin(metric v1alpha1.Metric) types.RpcError {
-	config := Config{}
-	err := json.Unmarshal(metric.Provider.Plugin["prometheus"], &config)
+	config, err := rest.InClusterConfig()
 	if err != nil {
 		return types.RpcError{ErrorString: err.Error()}
 	}
 
-	api, err := newPrometheusAPI(config.Address)
-	g.api = api
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return types.RpcError{ErrorString: err.Error()}
+	}
+
+	httpclient := NewHttpClient()
+	g.client = httpclient
+	g.kubeclientset = clientset
 
 	return types.RpcError{}
 }
@@ -55,42 +72,182 @@ func (g *RpcPlugin) Run(anaysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metric
 		StartedAt: &startTime,
 	}
 
-	config := Config{}
-	json.Unmarshal(metric.Provider.Plugin["prometheus"], &config)
+	OPSMXMetric := OPSMXMetric{}
+	if err := json.Unmarshal(metric.Provider.Plugin[opsmxPlugin], &OPSMXMetric); err != nil {
+		return metricutil.MarkMeasurementError(newMeasurement, err)
+	}
+	if err := OPSMXMetric.basicChecks(); err != nil {
+		return metricutil.MarkMeasurementError(newMeasurement, err)
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	response, warnings, err := g.api.Query(ctx, config.Query, time.Now())
+	secretData, err := OPSMXMetric.getDataSecret(g, anaysisRun)
 	if err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, err)
 	}
 
-	newValue, newStatus, err := g.processResponse(metric, response)
+	if err := OPSMXMetric.checkISDUrl(g, secretData["opsmxIsdUrl"]); err != nil {
+		return metricutil.MarkMeasurementError(newMeasurement, err)
+	}
+
+	err = OPSMXMetric.getTimeVariables()
 	if err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, err)
-
-	}
-	newMeasurement.Value = newValue
-	if len(warnings) > 0 {
-		warningMetadata := ""
-		for _, warning := range warnings {
-			warningMetadata = fmt.Sprintf(`%s"%s", `, warningMetadata, warning)
-		}
-		warningMetadata = warningMetadata[:len(warningMetadata)-2]
-		if warningMetadata != "" {
-			newMeasurement.Metadata = map[string]string{"warnings": warningMetadata}
-			g.LogCtx.Warnf("Prometheus returned the following warnings: %s", warningMetadata)
-		}
 	}
 
-	newMeasurement.Phase = newStatus
+	log.Info("generating the payload")
+	canaryurl, err := url.JoinPath(secretData["opsmxIsdUrl"], v5configIdLookupURLFormat)
+	if err != nil {
+		return metricutil.MarkMeasurementError(newMeasurement, err)
+	}
+	payload, err := OPSMXMetric.generatePayload(g, secretData, "/tmp")
+	if err != nil {
+		return metricutil.MarkMeasurementError(newMeasurement, err)
+	}
+	log.Info(payload)
+	log.Info("sending a POST request to registerCanary with the payload")
+	data, scoreURL, urlToken, err := makeRequest(g.client, "POST", canaryurl, payload, secretData["user"])
+	if err != nil {
+		return metricutil.MarkMeasurementError(newMeasurement, err)
+	}
+	//Struct to record canary Response
+	type canaryResponse struct {
+		Error    string      `json:"error,omitempty"`
+		Message  string      `json:"message,omitempty"`
+		CanaryId json.Number `json:"canaryId,omitempty"`
+	}
+	var canary canaryResponse
+
+	err = json.Unmarshal(data, &canary)
+	if err != nil {
+		return metricutil.MarkMeasurementError(newMeasurement, err)
+	}
+	log.Info("register canary response ", canary)
+	if canary.Error != "" {
+		errMessage := fmt.Sprintf("analysis Error: %s\nMessage: %s", canary.Error, canary.Message)
+		err := errors.New(errMessage)
+		if err != nil {
+			return metricutil.MarkMeasurementError(newMeasurement, err)
+		}
+	}
+	if scoreURL == "" {
+		return metricutil.MarkMeasurementError(newMeasurement, errors.New("analysis Error: score url not found"))
+	}
+	data, _, _, err = makeRequest(g.client, "GET", scoreURL, "", secretData["user"])
+	if err != nil {
+		return metricutil.MarkMeasurementError(newMeasurement, err)
+	}
+
+	var status map[string]interface{}
+	var reportUrlJson map[string]interface{}
+
+	err = json.Unmarshal(data, &status)
+	if err != nil {
+		errorMessage := fmt.Sprintf("analysis Error: Error in post processing canary Response: %v", err)
+		return metricutil.MarkMeasurementError(newMeasurement, errors.New(errorMessage))
+	}
+	jsonBytes, _ := json.MarshalIndent(status["canaryResult"], "", "   ")
+	err = json.Unmarshal(jsonBytes, &reportUrlJson)
+	if err != nil {
+		return metricutil.MarkMeasurementError(newMeasurement, err)
+	}
+	reportUrl := reportUrlJson["canaryReportURL"]
+
+	mapMetadata := make(map[string]string)
+	mapMetadata["canaryId"] = string(canary.CanaryId)
+	mapMetadata["gateUrl"] = secretData["gateUrl"]
+	mapMetadata["reportUrl"] = fmt.Sprintf("%s", reportUrl)
+	mapMetadata["reportId"] = urlToken
+
+	resumeTime := metav1.NewTime(timeutil.Now().Add(resumeAfter))
+	newMeasurement.Metadata = mapMetadata
+	newMeasurement.ResumeAt = &resumeTime
+	newMeasurement.Phase = v1alpha1.AnalysisPhaseRunning
 	finishedTime := timeutil.MetaNow()
 	newMeasurement.FinishedAt = &finishedTime
 	return newMeasurement
 }
 
+func processResume(data []byte, metric OPSMXMetric, measurement v1alpha1.Measurement) v1alpha1.Measurement {
+	var (
+		canaryScore string
+		result      map[string]interface{}
+		finalScore  map[string]interface{}
+	)
+
+	if !json.Valid(data) {
+		err := errors.New("invalid Response")
+		return metricutil.MarkMeasurementError(measurement, err)
+	}
+
+	json.Unmarshal(data, &result)
+	jsonBytes, _ := json.MarshalIndent(result["canaryResult"], "", "   ")
+	json.Unmarshal(jsonBytes, &finalScore)
+	if finalScore["overallScore"] == nil {
+		canaryScore = "0"
+	} else {
+		canaryScore = fmt.Sprintf("%v", finalScore["overallScore"])
+	}
+
+	var score int
+	if strings.Contains(canaryScore, ".") {
+		floatScore, _ := strconv.ParseFloat(canaryScore, 64)
+		score = int(roundFloat(floatScore, 0))
+	} else {
+		score, _ = strconv.Atoi(canaryScore)
+	}
+	measurement.Value = canaryScore
+	measurement.Phase = evaluateResult(score, metric.Pass)
+	if measurement.Phase == "Failed" && metric.LookBackType != "" {
+		measurement.Metadata["interval analysis message"] = fmt.Sprintf("Interval Analysis Failed at intervalNo. %s", measurement.Metadata["Current intervalNo"])
+	}
+	return measurement
+}
+
 func (g *RpcPlugin) Resume(analysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metric, measurement v1alpha1.Measurement) v1alpha1.Measurement {
+	OPSMXMetric := OPSMXMetric{}
+	if err := json.Unmarshal(metric.Provider.Plugin[opsmxPlugin], &OPSMXMetric); err != nil {
+		return metricutil.MarkMeasurementError(measurement, err)
+	}
+
+	secretData, _ := OPSMXMetric.getDataSecret(g, analysisRun)
+
+	scoreURL, _ := url.JoinPath(secretData["gateUrl"], scoreUrlFormat, measurement.Metadata["canaryId"])
+
+	data, _, _, err := makeRequest(g.client, "GET", scoreURL, "", secretData["user"])
+	if err != nil {
+		return metricutil.MarkMeasurementError(measurement, err)
+	}
+	var status map[string]interface{}
+	json.Unmarshal(data, &status)
+	a, _ := json.MarshalIndent(status["status"], "", "   ")
+	json.Unmarshal(a, &status)
+
+	var reportUrlJson map[string]interface{}
+	jsonBytes, _ := json.MarshalIndent(status["canaryResult"], "", "   ")
+	json.Unmarshal(jsonBytes, &reportUrlJson)
+	reportUrl := reportUrlJson["canaryReportURL"]
+	measurement.Metadata["reportUrl"] = fmt.Sprintf("%s", reportUrl)
+
+	if OPSMXMetric.LookBackType != "" {
+		measurement.Metadata["Current intervalNo"] = fmt.Sprintf("%v", reportUrlJson["intervalNo"])
+	}
+	//if the status is Running, resume analysis after delay
+	if status["status"] == "RUNNING" {
+		resumeTime := metav1.NewTime(timeutil.Now().Add(resumeAfter))
+		measurement.ResumeAt = &resumeTime
+		measurement.Phase = v1alpha1.AnalysisPhaseRunning
+		return measurement
+	}
+	//if run is cancelled mid-run
+	if status["status"] == "CANCELLED" {
+		measurement.Phase = v1alpha1.AnalysisPhaseFailed
+		measurement.Message = "Analysis Cancelled"
+	} else {
+		//POST-Run process
+		measurement = processResume(data, OPSMXMetric, measurement)
+	}
+	finishTime := timeutil.MetaNow()
+	measurement.FinishedAt = &finishTime
 	return measurement
 }
 
@@ -108,77 +265,12 @@ func (g *RpcPlugin) Type() string {
 
 func (g *RpcPlugin) GetMetadata(metric v1alpha1.Metric) map[string]string {
 	metricsMetadata := make(map[string]string)
-
-	config := Config{}
-	json.Unmarshal(metric.Provider.Plugin["prometheus"], &config)
-	if config.Query != "" {
-		metricsMetadata["ResolvedPrometheusQuery"] = config.Query
-	}
 	return metricsMetadata
 }
 
-func (g *RpcPlugin) processResponse(metric v1alpha1.Metric, response model.Value) (string, v1alpha1.AnalysisPhase, error) {
-	switch value := response.(type) {
-	case *model.Scalar:
-		valueStr := value.Value.String()
-		result := float64(value.Value)
-		newStatus, err := evaluate.EvaluateResult(result, metric, g.LogCtx)
-		return valueStr, newStatus, err
-	case model.Vector:
-		results := make([]float64, 0, len(value))
-		valueStr := "["
-		for _, s := range value {
-			if s != nil {
-				valueStr = valueStr + s.Value.String() + ","
-				results = append(results, float64(s.Value))
-			}
-		}
-		// if we appended to the string, we should remove the last comma on the string
-		if len(valueStr) > 1 {
-			valueStr = valueStr[:len(valueStr)-1]
-		}
-		valueStr = valueStr + "]"
-		newStatus, err := evaluate.EvaluateResult(results, metric, g.LogCtx)
-		return valueStr, newStatus, err
-	default:
-		return "", v1alpha1.AnalysisPhaseError, fmt.Errorf("Prometheus metric type not supported")
+func NewHttpClient() http.Client {
+	c := http.Client{
+		Timeout: defaultTimeout * time.Second,
 	}
-}
-
-func newPrometheusAPI(address string) (v1.API, error) {
-	envValuesByKey := make(map[string]string)
-	if value, ok := os.LookupEnv(fmt.Sprintf("%s", EnvVarArgoRolloutsPrometheusAddress)); ok {
-		envValuesByKey[EnvVarArgoRolloutsPrometheusAddress] = value
-		log.Debugf("ARGO_ROLLOUTS_PROMETHEUS_ADDRESS: %v", envValuesByKey[EnvVarArgoRolloutsPrometheusAddress])
-	}
-	if len(address) != 0 {
-		if !isUrl(address) {
-			return nil, errors.New("prometheus address is not is url format")
-		}
-	} else if envValuesByKey[EnvVarArgoRolloutsPrometheusAddress] != "" {
-		if isUrl(envValuesByKey[EnvVarArgoRolloutsPrometheusAddress]) {
-			address = envValuesByKey[EnvVarArgoRolloutsPrometheusAddress]
-		} else {
-			return nil, errors.New("prometheus address is not is url format")
-		}
-	} else {
-		return nil, errors.New("prometheus address is not configured")
-	}
-	client, err := api.NewClient(api.Config{
-		Address: address,
-	})
-	if err != nil {
-		log.Errorf("Error in getting prometheus client: %v", err)
-		return nil, err
-	}
-	return v1.NewAPI(client), nil
-}
-
-func isUrl(str string) bool {
-	u, err := url.Parse(str)
-	if err != nil {
-		log.Errorf("Error in parsing url: %v", err)
-	}
-	log.Debugf("Parsed url: %v", u)
-	return err == nil && u.Scheme != "" && u.Host != ""
+	return c
 }
