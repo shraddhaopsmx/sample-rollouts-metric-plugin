@@ -3,21 +3,22 @@ package plugin
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"github.com/argoproj/argo-rollouts/utils/plugin/types"
-	"net/url"
+	"io/ioutil"
+	"math/rand"
 	"os"
+	"strings"
 	"time"
+
+	metricutil "github.com/argoproj/argo-rollouts/utils/metric"
+	"github.com/argoproj/argo-rollouts/utils/plugin/types"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"github.com/argoproj/argo-rollouts/metricproviders/plugin"
 	"github.com/argoproj/argo-rollouts/pkg/apis/rollouts/v1alpha1"
-	"github.com/argoproj/argo-rollouts/utils/evaluate"
-	metricutil "github.com/argoproj/argo-rollouts/utils/metric"
 	timeutil "github.com/argoproj/argo-rollouts/utils/time"
-	"github.com/prometheus/client_golang/api"
-	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
-	"github.com/prometheus/common/model"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -26,65 +27,100 @@ const EnvVarArgoRolloutsPrometheusAddress string = "ARGO_ROLLOUTS_PROMETHEUS_ADD
 // Here is a real implementation of MetricsPlugin
 type RpcPlugin struct {
 	LogCtx log.Entry
-	api    v1.API
+	// api    v1.API
 }
 
 type Config struct {
 	// Address is the HTTP address and port of the prometheus server
 	Address string `json:"address,omitempty" protobuf:"bytes,1,opt,name=address"`
 	// Query is a raw prometheus query to perform
-	Query string `json:"query,omitempty" protobuf:"bytes,2,opt,name=query"`
+	ConfigMap string `json:"cm,omitempty" protobuf:"bytes,2,opt,name=cm"`
 }
 
 func (g *RpcPlugin) NewMetricsPlugin(metric v1alpha1.Metric) types.RpcError {
 	config := Config{}
-	err := json.Unmarshal(metric.Provider.Plugin["prometheus"], &config)
+	err := json.Unmarshal(metric.Provider.Plugin["opsmx"], &config)
 	if err != nil {
 		return types.RpcError{ErrorString: err.Error()}
 	}
 
-	api, err := newPrometheusAPI(config.Address)
-	g.api = api
+	// api, err := newPrometheusAPI(config.Address)
+	// g.api = api
 
 	return types.RpcError{}
 }
 
 func (g *RpcPlugin) Run(anaysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metric) v1alpha1.Measurement {
+	g.LogCtx.Info("In the Run func")
 	startTime := timeutil.MetaNow()
 	newMeasurement := v1alpha1.Measurement{
 		StartedAt: &startTime,
 	}
 
 	config := Config{}
-	json.Unmarshal(metric.Provider.Plugin["prometheus"], &config)
+	json.Unmarshal(metric.Provider.Plugin["opsmx"], &config)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// defer cancel()
 
-	response, warnings, err := g.api.Query(ctx, config.Query, time.Now())
+	// response, warnings, err := g.api.Query(ctx, config.Query, time.Now())
+	// if err != nil {
+	// 	return metricutil.MarkMeasurementError(newMeasurement, err)
+	// }
+
+	// newValue, newStatus, err := g.processResponse(metric, response)
+	// if err != nil {
+	// 	return metricutil.MarkMeasurementError(newMeasurement, err)
+
+	// }
+	// newMeasurement.Value = newValue
+	// if len(warnings) > 0 {
+	// 	warningMetadata := ""
+	// 	for _, warning := range warnings {
+	// 		warningMetadata = fmt.Sprintf(`%s"%s", `, warningMetadata, warning)
+	// 	}
+	// 	warningMetadata = warningMetadata[:len(warningMetadata)-2]
+	// 	if warningMetadata != "" {
+	// 		newMeasurement.Metadata = map[string]string{"warnings": warningMetadata}
+	// 		g.LogCtx.Warnf("Prometheus returned the following warnings: %s", warningMetadata)
+	// 	}
+	// }
+	ns := getNamespace()
+	cfg, _ := rest.InClusterConfig()
+
+	clientset, _ := kubernetes.NewForConfig(cfg)
+
+	cm, err := clientset.CoreV1().ConfigMaps(ns).Get(context.TODO(), "argo-rollouts-config", metav1.GetOptions{})
+	if err != nil {
+		return metricutil.MarkMeasurementError(newMeasurement, err)
+	}
+	cmData, ok := cm.Data["plugins"]
+	if !ok {
+		cmData = "No plugins thing"
+	}
+
+	secret, err := clientset.CoreV1().Secrets(ns).Get(context.TODO(), "opsmx-profile", metav1.GetOptions{})
 	if err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, err)
 	}
 
-	newValue, newStatus, err := g.processResponse(metric, response)
-	if err != nil {
-		return metricutil.MarkMeasurementError(newMeasurement, err)
-
-	}
-	newMeasurement.Value = newValue
-	if len(warnings) > 0 {
-		warningMetadata := ""
-		for _, warning := range warnings {
-			warningMetadata = fmt.Sprintf(`%s"%s", `, warningMetadata, warning)
-		}
-		warningMetadata = warningMetadata[:len(warningMetadata)-2]
-		if warningMetadata != "" {
-			newMeasurement.Metadata = map[string]string{"warnings": warningMetadata}
-			g.LogCtx.Warnf("Prometheus returned the following warnings: %s", warningMetadata)
-		}
+	source := "secret source"
+	secretSource, ok := secret.Data["sourceName"]
+	if ok {
+		source = string(secretSource)
 	}
 
-	newMeasurement.Phase = newStatus
+	rand.Seed(time.Now().UnixNano())
+
+	newMeasurement.Value = fmt.Sprintf("%d", rand.Intn(100))
+	mapMetadata := make(map[string]string)
+	mapMetadata["reportUrl"] = config.Address
+	mapMetadata["namespace"] = ns
+	mapMetadata["cmData"] = cmData
+	mapMetadata["sourceNameFromSecret"] = source
+	newMeasurement.Metadata = mapMetadata
+
+	newMeasurement.Phase = v1alpha1.AnalysisPhaseSuccessful
 	finishedTime := timeutil.MetaNow()
 	newMeasurement.FinishedAt = &finishedTime
 	return newMeasurement
@@ -107,78 +143,96 @@ func (g *RpcPlugin) Type() string {
 }
 
 func (g *RpcPlugin) GetMetadata(metric v1alpha1.Metric) map[string]string {
+	g.LogCtx.Info("In the getmetadata func")
 	metricsMetadata := make(map[string]string)
 
 	config := Config{}
-	json.Unmarshal(metric.Provider.Plugin["prometheus"], &config)
-	if config.Query != "" {
-		metricsMetadata["ResolvedPrometheusQuery"] = config.Query
+	json.Unmarshal(metric.Provider.Plugin["opsmx"], &config)
+	g.LogCtx.Info("In heereeeee")
+	if config.Address != "" {
+		g.LogCtx.Infof("The value of config Address is %s", config.Address)
+		metricsMetadata["testAddress"] = config.Address
 	}
 	return metricsMetadata
 }
 
-func (g *RpcPlugin) processResponse(metric v1alpha1.Metric, response model.Value) (string, v1alpha1.AnalysisPhase, error) {
-	switch value := response.(type) {
-	case *model.Scalar:
-		valueStr := value.Value.String()
-		result := float64(value.Value)
-		newStatus, err := evaluate.EvaluateResult(result, metric, g.LogCtx)
-		return valueStr, newStatus, err
-	case model.Vector:
-		results := make([]float64, 0, len(value))
-		valueStr := "["
-		for _, s := range value {
-			if s != nil {
-				valueStr = valueStr + s.Value.String() + ","
-				results = append(results, float64(s.Value))
-			}
-		}
-		// if we appended to the string, we should remove the last comma on the string
-		if len(valueStr) > 1 {
-			valueStr = valueStr[:len(valueStr)-1]
-		}
-		valueStr = valueStr + "]"
-		newStatus, err := evaluate.EvaluateResult(results, metric, g.LogCtx)
-		return valueStr, newStatus, err
-	default:
-		return "", v1alpha1.AnalysisPhaseError, fmt.Errorf("Prometheus metric type not supported")
-	}
-}
+// func (g *RpcPlugin) processResponse(metric v1alpha1.Metric, response model.Value) (string, v1alpha1.AnalysisPhase, error) {
+// 	switch value := response.(type) {
+// 	case *model.Scalar:
+// 		valueStr := value.Value.String()
+// 		result := float64(value.Value)
+// 		newStatus, err := evaluate.EvaluateResult(result, metric, g.LogCtx)
+// 		return valueStr, newStatus, err
+// 	case model.Vector:
+// 		results := make([]float64, 0, len(value))
+// 		valueStr := "["
+// 		for _, s := range value {
+// 			if s != nil {
+// 				valueStr = valueStr + s.Value.String() + ","
+// 				results = append(results, float64(s.Value))
+// 			}
+// 		}
+// 		// if we appended to the string, we should remove the last comma on the string
+// 		if len(valueStr) > 1 {
+// 			valueStr = valueStr[:len(valueStr)-1]
+// 		}
+// 		valueStr = valueStr + "]"
+// 		newStatus, err := evaluate.EvaluateResult(results, metric, g.LogCtx)
+// 		return valueStr, newStatus, err
+// 	default:
+// 		return "", v1alpha1.AnalysisPhaseError, fmt.Errorf("Prometheus metric type not supported")
+// 	}
+// }
 
-func newPrometheusAPI(address string) (v1.API, error) {
-	envValuesByKey := make(map[string]string)
-	if value, ok := os.LookupEnv(fmt.Sprintf("%s", EnvVarArgoRolloutsPrometheusAddress)); ok {
-		envValuesByKey[EnvVarArgoRolloutsPrometheusAddress] = value
-		log.Debugf("ARGO_ROLLOUTS_PROMETHEUS_ADDRESS: %v", envValuesByKey[EnvVarArgoRolloutsPrometheusAddress])
-	}
-	if len(address) != 0 {
-		if !isUrl(address) {
-			return nil, errors.New("prometheus address is not is url format")
-		}
-	} else if envValuesByKey[EnvVarArgoRolloutsPrometheusAddress] != "" {
-		if isUrl(envValuesByKey[EnvVarArgoRolloutsPrometheusAddress]) {
-			address = envValuesByKey[EnvVarArgoRolloutsPrometheusAddress]
-		} else {
-			return nil, errors.New("prometheus address is not is url format")
-		}
-	} else {
-		return nil, errors.New("prometheus address is not configured")
-	}
-	client, err := api.NewClient(api.Config{
-		Address: address,
-	})
-	if err != nil {
-		log.Errorf("Error in getting prometheus client: %v", err)
-		return nil, err
-	}
-	return v1.NewAPI(client), nil
-}
+// func newPrometheusAPI(address string) (v1.API, error) {
+// 	envValuesByKey := make(map[string]string)
+// 	if value, ok := os.LookupEnv(fmt.Sprintf("%s", EnvVarArgoRolloutsPrometheusAddress)); ok {
+// 		envValuesByKey[EnvVarArgoRolloutsPrometheusAddress] = value
+// 		log.Debugf("ARGO_ROLLOUTS_PROMETHEUS_ADDRESS: %v", envValuesByKey[EnvVarArgoRolloutsPrometheusAddress])
+// 	}
+// 	if len(address) != 0 {
+// 		if !isUrl(address) {
+// 			return nil, errors.New("prometheus address is not is url format")
+// 		}
+// 	} else if envValuesByKey[EnvVarArgoRolloutsPrometheusAddress] != "" {
+// 		if isUrl(envValuesByKey[EnvVarArgoRolloutsPrometheusAddress]) {
+// 			address = envValuesByKey[EnvVarArgoRolloutsPrometheusAddress]
+// 		} else {
+// 			return nil, errors.New("prometheus address is not is url format")
+// 		}
+// 	} else {
+// 		return nil, errors.New("prometheus address is not configured")
+// 	}
+// 	client, err := api.NewClient(api.Config{
+// 		Address: address,
+// 	})
+// 	if err != nil {
+// 		log.Errorf("Error in getting prometheus client: %v", err)
+// 		return nil, err
+// 	}
+// 	return v1.NewAPI(client), nil
+// }
 
-func isUrl(str string) bool {
-	u, err := url.Parse(str)
-	if err != nil {
-		log.Errorf("Error in parsing url: %v", err)
+// func isUrl(str string) bool {
+// 	u, err := url.Parse(str)
+// 	if err != nil {
+// 		log.Errorf("Error in parsing url: %v", err)
+// 	}
+// 	log.Debugf("Parsed url: %v", u)
+// 	return err == nil && u.Scheme != "" && u.Host != ""
+// }
+
+func getNamespace() string {
+	//Read from the POD_NAMESPACE
+	if ns, ok := os.LookupEnv("POD_NAMESPACE"); ok {
+		return ns
 	}
-	log.Debugf("Parsed url: %v", u)
-	return err == nil && u.Scheme != "" && u.Host != ""
+
+	if dataByte, err := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+		ns := strings.TrimSpace(string(dataByte))
+		if len(ns) > 0 {
+			return ns
+		}
+	}
+	return ""
 }
