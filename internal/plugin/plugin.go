@@ -206,9 +206,15 @@ func (g *RpcPlugin) Resume(analysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Me
 		return metricutil.MarkMeasurementError(measurement, err)
 	}
 
-	secretData, _ := OPSMXMetric.getDataSecret(g, analysisRun)
+	secretData, err := OPSMXMetric.getDataSecret(g, analysisRun)
+	if err != nil {
+		return metricutil.MarkMeasurementError(measurement, err)
+	}
 
-	scoreURL, _ := url.JoinPath(secretData["gateUrl"], scoreUrlFormat, measurement.Metadata["canaryId"])
+	scoreURL, err := url.JoinPath(secretData["opsmxIsdUrl"], scoreUrlFormat, measurement.Metadata["canaryId"])
+	if err != nil {
+		return metricutil.MarkMeasurementError(measurement, err)
+	}
 
 	data, _, _, err := makeRequest(g.client, "GET", scoreURL, "", secretData["user"])
 	if err != nil {
