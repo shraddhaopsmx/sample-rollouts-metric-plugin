@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -56,35 +55,35 @@ type errorTopics struct {
 }
 
 type OPSMXMetric struct {
-	User                 string         `yaml:"user,omitempty"`
-	OpsmxIsdUrl          string         `yaml:"opsmxIsdUrl,omitempty"`
-	Application          string         `yaml:"application"`
-	BaselineStartTime    string         `yaml:"baselineStartTime,omitempty"`
-	CanaryStartTime      string         `yaml:"canaryStartTime,omitempty"`
-	LifetimeMinutes      int            `yaml:"lifetimeMinutes,omitempty"`
-	EndTime              string         `yaml:"endTime,omitempty"`
-	GlobalLogTemplate    string         `yaml:"globalLogTemplate,omitempty"`
-	GlobalMetricTemplate string         `yaml:"globalMetricTemplate,omitempty"`
-	Pass                 int            `yaml:"passScore"`
-	Services             []OPSMXService `yaml:"serviceList,omitempty"`
-	IntervalTime         int            `yaml:"intervalTime,omitempty"`
-	LookBackType         string         `yaml:"lookBackType,omitempty"`
-	Delay                int            `yaml:"delay,omitempty"`
-	GitOPS               bool           `yaml:"gitops,omitempty"`
+	User                 string         `yaml:"user,omitempty" json:"user,omitempty"`
+	OpsmxIsdUrl          string         `yaml:"opsmxIsdUrl,omitempty" json:"opsmxIsdUrl,omitempty"`
+	Application          string         `yaml:"application" json:"application"`
+	BaselineStartTime    string         `yaml:"baselineStartTime,omitempty" json:"baselineStartTime,omitempty"`
+	CanaryStartTime      string         `yaml:"canaryStartTime,omitempty" json:"canaryStartTime,omitempty"`
+	LifetimeMinutes      int            `yaml:"lifetimeMinutes,omitempty" json:"lifetimeMinutes,omitempty"`
+	EndTime              string         `yaml:"endTime,omitempty" json:"endTime,omitempty"`
+	GlobalLogTemplate    string         `yaml:"globalLogTemplate,omitempty" json:"globalLogTemplate,omitempty"`
+	GlobalMetricTemplate string         `yaml:"globalMetricTemplate,omitempty" json:"globalMetricTemplate,omitempty"`
+	Pass                 int            `yaml:"passScore" json:"passScore"`
+	Services             []OPSMXService `yaml:"serviceList,omitempty" json:"serviceList,omitempty"`
+	IntervalTime         int            `yaml:"intervalTime,omitempty" json:"intervalTime,omitempty"`
+	LookBackType         string         `yaml:"lookBackType,omitempty" json:"lookBackType,omitempty"`
+	Delay                int            `yaml:"delay,omitempty" json:"delay,omitempty"`
+	GitOPS               bool           `yaml:"gitops,omitempty" json:"gitops,omitempty"`
 }
 
 type OPSMXService struct {
-	LogTemplateName       string `yaml:"logTemplateName,omitempty"`
-	LogTemplateVersion    string `yaml:"logTemplateVersion,omitempty"`
-	MetricTemplateName    string `yaml:"metricTemplateName,omitempty"`
-	MetricTemplateVersion string `yaml:"metricTemplateVersion,omitempty"`
-	LogScopeVariables     string `yaml:"logScopeVariables,omitempty"`
-	BaselineLogScope      string `yaml:"baselineLogScope,omitempty"`
-	CanaryLogScope        string `yaml:"canaryLogScope,omitempty"`
-	MetricScopeVariables  string `yaml:"metricScopeVariables,omitempty"`
-	BaselineMetricScope   string `yaml:"baselineMetricScope,omitempty"`
-	CanaryMetricScope     string `yaml:"canaryMetricScope,omitempty"`
-	ServiceName           string `yaml:"serviceName,omitempty"`
+	LogTemplateName       string `yaml:"logTemplateName,omitempty" json:"logTemplateName,omitempty"`
+	LogTemplateVersion    string `yaml:"logTemplateVersion,omitempty" json:"logTemplateVersion,omitempty"`
+	MetricTemplateName    string `yaml:"metricTemplateName,omitempty" json:"metricTemplateName,omitempty"`
+	MetricTemplateVersion string `yaml:"metricTemplateVersion,omitempty" json:"metricTemplateVersion,omitempty"`
+	LogScopeVariables     string `yaml:"logScopeVariables,omitempty" json:"logScopeVariables,omitempty"`
+	BaselineLogScope      string `yaml:"baselineLogScope,omitempty" json:"baselineLogScope,omitempty"`
+	CanaryLogScope        string `yaml:"canaryLogScope,omitempty" json:"canaryLogScope,omitempty"`
+	MetricScopeVariables  string `yaml:"metricScopeVariables,omitempty" json:"metricScopeVariables,omitempty"`
+	BaselineMetricScope   string `yaml:"baselineMetricScope,omitempty" json:"baselineMetricScope,omitempty"`
+	CanaryMetricScope     string `yaml:"canaryMetricScope,omitempty" json:"canaryMetricScope,omitempty"`
+	ServiceName           string `yaml:"serviceName,omitempty" json:"serviceName,omitempty"`
 }
 
 type jobPayload struct {
@@ -717,48 +716,48 @@ func evaluateResult(score int, pass int) v1alpha1.AnalysisPhase {
 	return v1alpha1.AnalysisPhaseFailed
 }
 
-// Extract the canaryScore and evaluateResult
-func (metric *OPSMXMetric) processResume(data []byte) (v1alpha1.AnalysisPhase, string, error) {
-	var (
-		canaryScore string
-		result      map[string]interface{}
-		finalScore  map[string]interface{}
-	)
+// // Extract the canaryScore and evaluateResult
+// func (metric *OPSMXMetric) processResume(data []byte) (v1alpha1.AnalysisPhase, string, error) {
+// 	var (
+// 		canaryScore string
+// 		result      map[string]interface{}
+// 		finalScore  map[string]interface{}
+// 	)
 
-	err := json.Unmarshal(data, &result)
-	if err != nil {
-		errorMessage := fmt.Sprintf("analysis Error: Error in post processing canary Response. Error: %v", err)
-		return "", "", errors.New(errorMessage)
-	}
-	jsonBytes, _ := json.MarshalIndent(result["canaryResult"], "", "   ")
-	err = json.Unmarshal(jsonBytes, &finalScore)
-	if err != nil {
-		return "", "", err
-	}
-	if finalScore["overallScore"] == nil {
-		canaryScore = "0"
-	} else {
-		canaryScore = fmt.Sprintf("%v", finalScore["overallScore"])
-	}
+// 	err := json.Unmarshal(data, &result)
+// 	if err != nil {
+// 		errorMessage := fmt.Sprintf("analysis Error: Error in post processing canary Response. Error: %v", err)
+// 		return "", "", errors.New(errorMessage)
+// 	}
+// 	jsonBytes, _ := json.MarshalIndent(result["canaryResult"], "", "   ")
+// 	err = json.Unmarshal(jsonBytes, &finalScore)
+// 	if err != nil {
+// 		return "", "", err
+// 	}
+// 	if finalScore["overallScore"] == nil {
+// 		canaryScore = "0"
+// 	} else {
+// 		canaryScore = fmt.Sprintf("%v", finalScore["overallScore"])
+// 	}
 
-	var score int
-	// var err error
-	if strings.Contains(canaryScore, ".") {
-		floatScore, err := strconv.ParseFloat(canaryScore, 64)
-		if err != nil {
-			return "", "", err
-		}
-		score = int(roundFloat(floatScore, 0))
-	} else {
-		score, err = strconv.Atoi(canaryScore)
-		if err != nil {
-			return "", "", err
-		}
-	}
+// 	var score int
+// 	// var err error
+// 	if strings.Contains(canaryScore, ".") {
+// 		floatScore, err := strconv.ParseFloat(canaryScore, 64)
+// 		if err != nil {
+// 			return "", "", err
+// 		}
+// 		score = int(roundFloat(floatScore, 0))
+// 	} else {
+// 		score, err = strconv.Atoi(canaryScore)
+// 		if err != nil {
+// 			return "", "", err
+// 		}
+// 	}
 
-	Phase := evaluateResult(score, int(metric.Pass))
-	return Phase, fmt.Sprintf("%v", score), nil
-}
+// 	Phase := evaluateResult(score, int(metric.Pass))
+// 	return Phase, fmt.Sprintf("%v", score), nil
+// }
 
 func (metric *OPSMXMetric) getDataSecret(c *RpcPlugin, ar *v1alpha1.AnalysisRun) (map[string]string, error) {
 
