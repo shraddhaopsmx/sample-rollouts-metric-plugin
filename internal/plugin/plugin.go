@@ -41,13 +41,6 @@ type RpcPlugin struct {
 	client        http.Client
 }
 
-// type OpsmxSecret struct {
-// 	user          string
-// 	opsmxIsdUrl   string
-// 	sourceName    string
-// 	cdIntegration string
-// }
-
 func (g *RpcPlugin) NewMetricsPlugin(metric v1alpha1.Metric) types.RpcError {
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -76,6 +69,10 @@ func (g *RpcPlugin) Run(anaysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metric
 	if err := json.Unmarshal(metric.Provider.Plugin[opsmxPlugin], &OPSMXMetric); err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, err)
 	}
+	log.Info("The metric is ---")
+	res2B, _ := json.Marshal(OPSMXMetric)
+	log.Info("It is ----")
+	log.Infof(string(res2B))
 	if err := OPSMXMetric.basicChecks(); err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, err)
 	}
