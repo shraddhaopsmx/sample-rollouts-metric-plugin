@@ -159,8 +159,6 @@ func (g *RpcPlugin) Run(anaysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metric
 	newMeasurement.Metadata = mapMetadata
 	newMeasurement.ResumeAt = &resumeTime
 	newMeasurement.Phase = v1alpha1.AnalysisPhaseRunning
-	finishedTime := timeutil.MetaNow()
-	newMeasurement.FinishedAt = &finishedTime
 	return newMeasurement
 }
 
