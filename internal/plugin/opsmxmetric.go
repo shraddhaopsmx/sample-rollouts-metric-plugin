@@ -262,7 +262,7 @@ func (metric *OPSMXMetric) processServices(g *RpcPlugin, opsmxProfileData opsmxP
 			}
 			//TODO: handle more here
 			if item.MetricTemplateVersion != "" {
-				serviceData.templateVersion = item.LogTemplateVersion
+				serviceData.templateVersion = item.MetricTemplateVersion
 			}
 			servicesArray = append(servicesArray, serviceData)
 		}
