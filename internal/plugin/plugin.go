@@ -95,7 +95,7 @@ func (g *RpcPlugin) Run(analysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metri
 
 	log.Info(payload)
 	log.Info("sending a POST request to registerCanary with the payload")
-	data, scoreURL, urlToken, err := makeRequest(g.client, "POST", canaryurl, payload, opsmxProfileData.user)
+	data, urlToken, err := makeRequest(g.client, "POST", canaryurl, payload, opsmxProfileData.user)
 	if err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, err)
 	}
@@ -113,35 +113,11 @@ func (g *RpcPlugin) Run(analysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metri
 	log.Info("register canary response ", canary)
 	if canary.Error != "" {
 		errMessage := fmt.Sprintf("analysis Error: %s\nMessage: %s", canary.Error, canary.Message)
-		err := errors.New(errMessage)
-		if err != nil {
-			return metricutil.MarkMeasurementError(newMeasurement, err)
-		}
-	}
-	if scoreURL == "" {
-		return metricutil.MarkMeasurementError(newMeasurement, errors.New("analysis Error: score url not found"))
-	}
-	data, _, _, err = makeRequest(g.client, "GET", scoreURL, "", opsmxProfileData.user)
-	if err != nil {
-		return metricutil.MarkMeasurementError(newMeasurement, err)
+		return metricutil.MarkMeasurementError(newMeasurement, errors.New(errMessage))
 	}
 
-	var status map[string]interface{}
-	var reportUrlJson map[string]interface{}
-
-	err = json.Unmarshal(data, &status)
-	if err != nil {
-		return metricutil.MarkMeasurementError(newMeasurement, fmt.Errorf("analysis Error: Error in post processing canary Response: %v", err))
-	}
-	jsonBytes, _ := json.MarshalIndent(status["canaryResult"], "", "   ")
-	err = json.Unmarshal(jsonBytes, &reportUrlJson)
-	if err != nil {
-		return metricutil.MarkMeasurementError(newMeasurement, err)
-	}
-	reportUrl := reportUrlJson["canaryReportURL"]
 	mapMetadata := make(map[string]string)
 	mapMetadata["canaryId"] = string(canary.CanaryId)
-	mapMetadata["reportUrl"] = fmt.Sprintf("%s", reportUrl)
 	mapMetadata["reportId"] = urlToken
 	mapMetadata["payload"] = payload
 
@@ -159,14 +135,16 @@ func processResume(data []byte, metric OPSMXMetric, measurement v1alpha1.Measure
 		finalScore  map[string]interface{}
 	)
 
-	if !json.Valid(data) {
-		err := errors.New("invalid Response")
+	err := json.Unmarshal(data, &result)
+	if err != nil {
+		err := fmt.Errorf("analysis Error: Error in post processing canary Response. Error: %v", err)
 		return metricutil.MarkMeasurementError(measurement, err)
 	}
-
-	json.Unmarshal(data, &result)
 	jsonBytes, _ := json.MarshalIndent(result["canaryResult"], "", "   ")
-	json.Unmarshal(jsonBytes, &finalScore)
+	err = json.Unmarshal(jsonBytes, &finalScore)
+	if err != nil {
+		return metricutil.MarkMeasurementError(measurement, err)
+	}
 	if finalScore["overallScore"] == nil {
 		canaryScore = "0"
 	} else {
@@ -175,11 +153,18 @@ func processResume(data []byte, metric OPSMXMetric, measurement v1alpha1.Measure
 
 	var score int
 	if strings.Contains(canaryScore, ".") {
-		floatScore, _ := strconv.ParseFloat(canaryScore, 64)
+		floatScore, err := strconv.ParseFloat(canaryScore, 64)
+		if err != nil {
+			return metricutil.MarkMeasurementError(measurement, err)
+		}
 		score = int(roundFloat(floatScore, 0))
 	} else {
-		score, _ = strconv.Atoi(canaryScore)
+		score, err = strconv.Atoi(canaryScore)
+		if err != nil {
+			return metricutil.MarkMeasurementError(measurement, err)
+		}
 	}
+
 	measurement.Value = canaryScore
 	measurement.Phase = evaluateResult(score, metric.Pass, metric.Marginal)
 	if measurement.Phase == "Failed" && metric.LookBackType != "" {
@@ -193,31 +178,35 @@ func (g *RpcPlugin) Resume(analysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Me
 	if err := json.Unmarshal(metric.Provider.Plugin[opsmxPlugin], &OPSMXMetric); err != nil {
 		return metricutil.MarkMeasurementError(measurement, err)
 	}
-
 	opsmxProfile, err := getOpsmxProfile(g, OPSMXMetric, analysisRun.Namespace)
 	if err != nil {
 		return metricutil.MarkMeasurementError(measurement, err)
 	}
-
 	scoreURL, err := url.JoinPath(opsmxProfile.opsmxIsdUrl, scoreUrlFormat, measurement.Metadata["canaryId"])
 	if err != nil {
 		return metricutil.MarkMeasurementError(measurement, err)
 	}
-
-	data, _, _, err := makeRequest(g.client, "GET", scoreURL, "", opsmxProfile.user)
+	data, _, err := makeRequest(g.client, "GET", scoreURL, "", opsmxProfile.user)
 	if err != nil {
 		return metricutil.MarkMeasurementError(measurement, err)
 	}
 	var status map[string]interface{}
-	json.Unmarshal(data, &status)
-	a, _ := json.MarshalIndent(status["status"], "", "   ")
-	json.Unmarshal(a, &status)
-
 	var reportUrlJson map[string]interface{}
-	jsonBytes, _ := json.MarshalIndent(status["canaryResult"], "", "   ")
-	json.Unmarshal(jsonBytes, &reportUrlJson)
-	reportUrl := reportUrlJson["canaryReportURL"]
-	measurement.Metadata["reportUrl"] = fmt.Sprintf("%s", reportUrl)
+
+	err = json.Unmarshal(data, &status)
+	if err != nil {
+		err := fmt.Errorf("analysis Error: Error in post processing canary Response: %v", err)
+		return metricutil.MarkMeasurementError(measurement, err)
+	}
+	jsonBytes, err := json.MarshalIndent(status["canaryResult"], "", "   ")
+	if err != nil {
+		return metricutil.MarkMeasurementError(measurement, err)
+	}
+	err = json.Unmarshal(jsonBytes, &reportUrlJson)
+	if err != nil {
+		return metricutil.MarkMeasurementError(measurement, err)
+	}
+	measurement.Metadata["reportUrl"] = fmt.Sprintf("%s", reportUrlJson["canaryReportURL"])
 
 	if OPSMXMetric.LookBackType != "" {
 		measurement.Metadata["Current intervalNo"] = fmt.Sprintf("%v", reportUrlJson["intervalNo"])

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -108,12 +107,10 @@ func (metric *OPSMXMetric) process(g *RpcPlugin, opsmxProfileData opsmxProfile, 
 	if err := metric.setIntervalTime(); err != nil {
 		return "", err
 	}
-
 	services, err := metric.processServices(g, opsmxProfileData, ns)
 	if err != nil {
 		return "", err
 	}
-
 	payload, err := metric.generatePayload(opsmxProfileData, services)
 	if err != nil {
 		return "", nil
@@ -177,27 +174,30 @@ func (metric *OPSMXMetric) setIntervalTime() error {
 		if err != nil {
 			return fmt.Errorf("provider config map validation error: Error in parsing endTime: %v", err)
 		}
-		//TODO: move this out
 		if metric.CanaryStartTime != "" && metric.CanaryStartTime > metric.EndTime {
 			err := errors.New("provider config map validation error: canaryStartTime cannot be greater than endTime")
 			return err
 		}
 		tsStart := time.Now()
-		//TODO: dont ignore the errors
 		if metric.CanaryStartTime != "" {
-			tsStart, _ = time.Parse(time.RFC3339, metric.CanaryStartTime)
+			tsStart, err = time.Parse(time.RFC3339, metric.CanaryStartTime)
+			if err != nil {
+				return err
+			}
 		}
 		tsDifference := tsEnd.Sub(tsStart)
-		min, _ := time.ParseDuration(tsDifference.String())
+		min, err := time.ParseDuration(tsDifference.String())
+		if err != nil {
+			return err
+		}
 		metric.LifetimeMinutes = int(roundFloat(min.Minutes(), 0))
 	}
 	return nil
 }
+
 func (metric *OPSMXMetric) processServices(g *RpcPlugin, opsmxProfileData opsmxProfile, namespace string) ([]service, error) {
 	servicesArray := []service{}
 	for i, item := range metric.Services {
-		//TODO: check why this has been addded
-		// valid := false
 		serviceName := fmt.Sprintf("service%d", i+1)
 		if item.ServiceName != "" {
 			serviceName = item.ServiceName
@@ -224,7 +224,7 @@ func (metric *OPSMXMetric) processServices(g *RpcPlugin, opsmxProfileData opsmxP
 				baselineScopeVariables: item.BaselineLogScope}
 
 			if metric.GitOPS && item.LogTemplateVersion == "" {
-				shaLog, err := generateTemplateGitops(logTemplate, "LOG", item.LogScopeVariables, g, opsmxProfileData, namespace)
+				shaLog, err := generateTemplateGitops(g, opsmxProfileData, logTemplate, "LOG", item.LogScopeVariables, namespace)
 				if err != nil {
 					return []service{}, err
 				}
@@ -254,7 +254,7 @@ func (metric *OPSMXMetric) processServices(g *RpcPlugin, opsmxProfileData opsmxP
 				baselineScopeVariables: item.BaselineMetricScope}
 
 			if metric.GitOPS && item.MetricTemplateVersion == "" {
-				shaMetric, err := generateTemplateGitops(metricTemplate, "METRIC", item.MetricScopeVariables, g, opsmxProfileData, namespace)
+				shaMetric, err := generateTemplateGitops(g, opsmxProfileData, metricTemplate, "METRIC", item.MetricScopeVariables, namespace)
 				if err != nil {
 					return []service{}, err
 				}
@@ -271,17 +271,14 @@ func (metric *OPSMXMetric) processServices(g *RpcPlugin, opsmxProfileData opsmxP
 }
 
 func (metric *OPSMXMetric) generatePayload(opsmxProfileData opsmxProfile, services []service) (string, error) {
-
 	var intervalTime string
 	if metric.IntervalTime != 0 {
 		intervalTime = fmt.Sprintf("%d", metric.IntervalTime)
 	}
-
 	var opsmxdelay string
 	if metric.Delay != 0 {
 		opsmxdelay = fmt.Sprintf("%d", metric.Delay)
 	}
-
 	payload := jobPayload{Application: metric.Application,
 		SourceName: opsmxProfileData.sourceName,
 		SourceType: opsmxProfileData.cdIntegration,
@@ -304,7 +301,6 @@ func (metric *OPSMXMetric) generatePayload(opsmxProfileData opsmxProfile, servic
 		return "", err
 	}
 	return string(buffer), err
-
 }
 
 func (metric *OPSMXMetric) populateCanaryDeployment(services []service) []canaryDeployments {
@@ -364,66 +360,62 @@ func (metric *OPSMXMetric) populateCanaryDeployment(services []service) []canary
 	}
 	canaryDeploymentsArray = append(canaryDeploymentsArray, deployment)
 	return canaryDeploymentsArray
-
 }
 
 func (metric *OPSMXMetric) validateLogs(item OPSMXService, serviceName string) (bool, error) {
-
 	var isLog bool
 	if item.LogScopeVariables == "" && item.BaselineLogScope != "" || item.LogScopeVariables == "" && item.CanaryLogScope != "" {
-		errorMsg := fmt.Sprintf("provider config map validation error: missing log Scope placeholder for the provided baseline/canary of service '%s'", serviceName)
-		return isLog, errors.New(errorMsg)
+		err := fmt.Errorf("missing log Scope placeholder for the provided baseline/canary of service '%s'", serviceName)
+		return isLog, err
 	}
-	//For Log Analysis is to be added in analysis-run
 	if item.LogScopeVariables != "" {
 		isLog = true
 		//Check if no baseline or canary
 		if item.BaselineLogScope != "" && item.CanaryLogScope == "" {
-			errorMsg := fmt.Sprintf("provider config map validation error: missing canary for log analysis of service '%s'", serviceName)
-			return isLog, errors.New(errorMsg)
+			err := fmt.Errorf("missing canary for log analysis of service '%s'", serviceName)
+			return isLog, err
 		}
 		//Check if the number of placeholders provided dont match
 		if len(strings.Split(item.LogScopeVariables, ",")) != len(strings.Split(item.BaselineLogScope, ",")) || len(strings.Split(item.LogScopeVariables, ",")) != len(strings.Split(item.CanaryLogScope, ",")) {
-			errorMsg := fmt.Sprintf("provider config map validation error: mismatch in number of log scope variables and baseline/canary log scope of service '%s'", serviceName)
-			return isLog, errors.New(errorMsg)
+			err := fmt.Errorf("mismatch in number of log scope variables and baseline/canary log scope of service '%s'", serviceName)
+			return isLog, err
 		}
 		if item.LogTemplateName == "" && metric.GlobalLogTemplate == "" {
-			errorMsg := fmt.Sprintf("provider config map validation error: provide either a service specific log template or global log template for service '%s'", serviceName)
-			return isLog, errors.New(errorMsg)
+			err := fmt.Errorf("provide either a service specific log template or global log template for service '%s'", serviceName)
+			return isLog, err
 		}
 	}
 	return isLog, nil
 }
 
 func (metric *OPSMXMetric) validateMetrics(item OPSMXService, serviceName string) (bool, error) {
-
 	var isMetric bool
 	if item.MetricScopeVariables == "" && item.BaselineMetricScope != "" || item.MetricScopeVariables == "" && item.CanaryMetricScope != "" {
-		errorMsg := fmt.Sprintf("provider config map validation error: missing metric Scope placeholder for the provided baseline/canary of service '%s'", serviceName)
-		return isMetric, errors.New(errorMsg)
+		err := fmt.Errorf("missing metric Scope placeholder for the provided baseline/canary of service '%s'", serviceName)
+		return isMetric, err
 	}
-	//For metric analysis is to be added in analysis-run
+
 	if item.MetricScopeVariables != "" {
 		isMetric = true
 		//Check if no baseline or canary
 		if item.BaselineMetricScope == "" || item.CanaryMetricScope == "" {
-			errorMsg := fmt.Sprintf("provider config map validation error: missing baseline/canary for metric analysis of service '%s'", serviceName)
-			return isMetric, errors.New(errorMsg)
+			err := fmt.Errorf("missing baseline/canary for metric analysis of service '%s'", serviceName)
+			return isMetric, err
 		}
 		//Check if the number of placeholders provided dont match
 		if len(strings.Split(item.MetricScopeVariables, ",")) != len(strings.Split(item.BaselineMetricScope, ",")) || len(strings.Split(item.MetricScopeVariables, ",")) != len(strings.Split(item.CanaryMetricScope, ",")) {
-			errorMsg := fmt.Sprintf("provider config map validation error: mismatch in number of metric scope variables and baseline/canary metric scope of service '%s'", serviceName)
-			return isMetric, errors.New(errorMsg)
+			err := fmt.Errorf("mismatch in number of metric scope variables and baseline/canary metric scope of service '%s'", serviceName)
+			return isMetric, err
 		}
 		if item.MetricTemplateName == "" && metric.GlobalMetricTemplate == "" {
-			errorMsg := fmt.Sprintf("provider config map validation error: provide either a service specific metric template or global metric template for service: %s", serviceName)
-			return isMetric, errors.New(errorMsg)
+			err := fmt.Errorf("provide either a service specific metric template or global metric template for service: %s", serviceName)
+			return isMetric, err
 		}
 	}
 	return isMetric, nil
 }
 
-func generateTemplateGitops(templateName string, templateType string, scopeVars string, c *RpcPlugin, secret opsmxProfile, nameSpace string) (string, error) {
+func generateTemplateGitops(c *RpcPlugin, secret opsmxProfile, templateName string, templateType string, scopeVars string, nameSpace string) (string, error) {
 	v1ConfigMap, err := c.kubeclientset.CoreV1().ConfigMaps(nameSpace).Get(context.TODO(), templateName, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("gitops '%s' template config map validation error: %v\n Action Required: Template must carry data element '%s'", templateName, err, templateName)
@@ -442,12 +434,12 @@ func generateTemplateGitops(templateName string, templateType string, scopeVars 
 	} else {
 		checktemplateName := gjson.Get(string(templateFileData), "templateName")
 		if checktemplateName.String() == "" {
-			errmessage := fmt.Sprintf("gitops '%s' template config map validation error: template name not provided inside json", templateName)
-			return "", errors.New(errmessage)
+			err := fmt.Errorf("gitops '%s' template config map validation error: template name not provided inside json", templateName)
+			return "", err
 		}
 		if templateName != checktemplateName.String() {
-			errmessage := fmt.Sprintf("gitops '%s' template config map validation error: Mismatch between templateName and data.%s key", templateName, templateName)
-			return "", errors.New(errmessage)
+			err := fmt.Errorf("gitops '%s' template config map validation error: Mismatch between templateName and data.%s key", templateName, templateName)
+			return "", err
 		}
 	}
 
@@ -457,24 +449,21 @@ func generateTemplateGitops(templateName string, templateType string, scopeVars 
 		return "", err
 	}
 
-	log.Info("sending a GET request to gitops API")
-	log.Info(templateUrl)
-	data, _, _, err := makeRequest(c.client, "GET", templateUrl, "", secret.user)
+	data, _, err := makeRequest(c.client, "GET", templateUrl, "", secret.user)
 	if err != nil {
 		return "", err
 	}
 	var templateVerification bool
 	err = json.Unmarshal(data, &templateVerification)
 	if err != nil {
-		errorMessage := fmt.Sprintf("analysis Error: Expected bool response from gitops verifyTemplate response  Error: %v. Action: Check endpoint given in secret/providerConfig.", err)
-		return "", errors.New(errorMessage)
+		err := fmt.Errorf("analysis Error: Expected bool response from gitops verifyTemplate response  Error: %v. Action: Check endpoint given in secret/providerConfig", err)
+		return "", err
 	}
-	templateData := sha1Code
+
 	var templateCheckSave map[string]interface{}
 	//TODO: refactor
 	if !templateVerification {
-		log.Info("sending a POST request to gitops API")
-		data, _, _, err = makeRequest(c.client, "POST", templateUrl, string(templateFileData), secret.user)
+		data, _, err = makeRequest(c.client, "POST", templateUrl, string(templateFileData), secret.user)
 		if err != nil {
 			return "", err
 		}
@@ -482,7 +471,7 @@ func generateTemplateGitops(templateName string, templateType string, scopeVars 
 		if err != nil {
 			return "", err
 		}
-		log.Infof("the value of templateCheckSave var is %v", templateCheckSave)
+
 		var errorss string
 		if templateCheckSave["errorMessage"] != nil && templateCheckSave["errorMessage"] != "" {
 			errorss = fmt.Sprintf("%v", templateCheckSave["errorMessage"])
@@ -495,7 +484,7 @@ func generateTemplateGitops(templateName string, templateType string, scopeVars 
 			return "", err
 		}
 	}
-	return templateData, nil
+	return sha1Code, nil
 }
 
 func getTemplateDataYaml(templateFileData []byte, template string, templateType string, ScopeVariables string) ([]byte, error) {
