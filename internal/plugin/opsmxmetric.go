@@ -5,59 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/argoproj/argo-rollouts/pkg/apis/rollouts/v1alpha1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
-
-	"gopkg.in/yaml.v2"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-type LogTemplateYaml struct {
-	DisableDefaultsErrorTopics bool          `yaml:"disableDefaultErrorTopics" json:"-"`
-	TemplateName               string        `yaml:"templateName" json:"templateName"`
-	FilterKey                  string        `yaml:"filterKey" json:"filterKey"`
-	TagEnabled                 bool          `yaml:"-" json:"tagEnabled"`
-	MonitoringProvider         string        `yaml:"monitoringProvider" json:"monitoringProvider"`
-	AccountName                string        `yaml:"accountName" json:"accountName"`
-	ScoringAlgorithm           string        `yaml:"scoringAlgorithm" json:"scoringAlgorithm"`
-	Index                      string        `yaml:"index,omitempty" json:"index,omitempty"`
-	ResponseKeywords           string        `yaml:"responseKeywords" json:"responseKeywords"`
-	ContextualCluster          bool          `yaml:"contextualCluster,omitempty" json:"contextualCluster,omitempty"`
-	ContextualWindowSize       int           `yaml:"contextualWindowSize,omitempty" json:"contextualWindowSize,omitempty"`
-	InfoScoring                bool          `yaml:"infoScoring,omitempty" json:"infoScoring,omitempty"`
-	RegExFilter                bool          `yaml:"regExFilter,omitempty" json:"regExFilter,omitempty"`
-	RegExResponseKey           string        `yaml:"regExResponseKey,omitempty" json:"regExResponseKey,omitempty"`
-	RegularExpression          string        `yaml:"regularExpression,omitempty" json:"regularExpression,omitempty"`
-	AutoBaseline               bool          `yaml:"autoBaseline,omitempty" json:"autoBaseline,omitempty"`
-	Sensitivity                string        `yaml:"sensitivity,omitempty" json:"sensitivity,omitempty"`
-	StreamID                   string        `yaml:"streamId,omitempty" json:"streamId,omitempty"`
-	Tags                       []customTags  `yaml:"tags" json:"tags,omitempty"`
-	ErrorTopics                []errorTopics `yaml:"errorTopics" json:"errorTopics"`
-}
-
-type customTags struct {
-	ErrorStrings string `yaml:"errorString" json:"string"`
-	Tag          string `yaml:"tag" json:"tag"`
-}
-
-type errorTopics struct {
-	ErrorStrings string `yaml:"errorString" json:"string"`
-	Topic        string `yaml:"topic" json:"topic"`
-	Type         string `yaml:"-" json:"type"`
-}
 
 type OPSMXMetric struct {
 	User                 string         `yaml:"user,omitempty" json:"user,omitempty"`
 	OpsmxIsdUrl          string         `yaml:"opsmxIsdUrl,omitempty" json:"opsmxIsdUrl,omitempty"`
 	Application          string         `yaml:"application" json:"application"`
+	Profile              string         `yaml:"profile,omitempty" json:"profile,omitempty"`
 	BaselineStartTime    string         `yaml:"baselineStartTime,omitempty" json:"baselineStartTime,omitempty"`
 	CanaryStartTime      string         `yaml:"canaryStartTime,omitempty" json:"canaryStartTime,omitempty"`
 	LifetimeMinutes      int            `yaml:"lifetimeMinutes,omitempty" json:"lifetimeMinutes,omitempty"`
@@ -65,6 +25,7 @@ type OPSMXMetric struct {
 	GlobalLogTemplate    string         `yaml:"globalLogTemplate,omitempty" json:"globalLogTemplate,omitempty"`
 	GlobalMetricTemplate string         `yaml:"globalMetricTemplate,omitempty" json:"globalMetricTemplate,omitempty"`
 	Pass                 int            `yaml:"passScore" json:"passScore"`
+	Marginal             int            `yaml:"marginalScore" json:"marginalScore"`
 	Services             []OPSMXService `yaml:"serviceList,omitempty" json:"serviceList,omitempty"`
 	IntervalTime         int            `yaml:"intervalTime,omitempty" json:"intervalTime,omitempty"`
 	LookBackType         string         `yaml:"lookBackType,omitempty" json:"lookBackType,omitempty"`
@@ -122,177 +83,107 @@ type logMetric struct {
 	Metric map[string]map[string]string `json:"metric,omitempty"`
 }
 
-const DefaultsErrorTopicsJson = `{
-	"errorTopics": [
-	  {
-		"string": "OnOutOfMemoryError",
-		"topic": "critical",
-		"type": "default"
-	  },
-	  {
-		"string": "StackOverflowError",
-		"topic": "critical",
-		"type": "default"
-	  },
-	  {
-		"string": "ClassNotFoundException",
-		"topic": "critical",
-		"type": "default"
-	  },
-	  {
-		"string": "FileNotFoundException",
-		"topic": "critical",
-		"type": "default"
-	  },
-	  {
-		"string": "ArrayIndexOutOfBounds",
-		"topic": "critical",
-		"type": "default"
-	  },
-	  {
-		"string": "NullPointerException",
-		"topic": "critical",
-		"type": "default"
-	  },
-	  {
-		"string": "StringIndexOutOfBoundsException",
-		"topic": "critical",
-		"type": "default"
-	  },
-	  {
-		"string": "FATAL",
-		"topic": "critical",
-		"type": "default"
-	  },
-	  {
-		"string": "SEVERE",
-		"topic": "critical",
-		"type": "default"
-	  },
-	  {
-		"string": "NoClassDefFoundError",
-		"topic": "error",
-		"type": "default"
-	  },
-	  {
-		"string": "NoSuchMethodFoundError",
-		"topic": "error",
-		"type": "default"
-	  },
-	  {
-		"string": "NumberFormatException",
-		"topic": "error",
-		"type": "default"
-	  },
-	  {
-		"string": "IllegalArgumentException",
-		"topic": "error",
-		"type": "default"
-	  },
-	  {
-		"string": "ParseException",
-		"topic": "error",
-		"type": "default"
-	  },
-	  {
-		"string": "SQLException",
-		"topic": "error",
-		"type": "default"
-	  },
-	  {
-		"string": "ArithmeticException",
-		"topic": "error",
-		"type": "default"
-	  },
-	  {
-		"string": "status=404",
-		"topic": "error",
-		"type": "default"
-	  },
-	  {
-		"string": "status=500",
-		"topic": "error",
-		"type": "default"
-	  },
-	  {
-		"string": "EXCEPTION",
-		"topic": "error",
-		"type": "default"
-	  },
-	  {
-		"string": "ERROR",
-		"topic": "error",
-		"type": "default"
-	  },
-	  {
-		"string": "WARN",
-		"topic": "warn",
-		"type": "default"
-	  }
-	]
-  }`
+type service struct {
+	logMetric              string
+	serviceName            string
+	serviceGate            string
+	template               string
+	templateVersion        string
+	templateSha            string
+	scopeVariables         string
+	canaryScopeVariables   string
+	baselineScopeVariables string
+}
 
-// Check few conditions pre-analysis
+func (metric *OPSMXMetric) process(g *RpcPlugin, opsmxProfileData opsmxProfile, ns string) (string, error) {
+	if err := metric.basicChecks(); err != nil {
+		return "", err
+	}
+	if err := metric.setCanaryStartTime(); err != nil {
+		return "", err
+	}
+	if err := metric.setBaselineStartTime(); err != nil {
+		return "", err
+	}
+	if err := metric.setIntervalTime(); err != nil {
+		return "", err
+	}
+
+	services, err := metric.processServices(g, opsmxProfileData, ns)
+	if err != nil {
+		return "", err
+	}
+
+	payload, err := metric.generatePayload(opsmxProfileData, services)
+	if err != nil {
+		return "", nil
+	}
+	return payload, nil
+}
+
+// TODO: may or may not convert to validators
 func (metric *OPSMXMetric) basicChecks() error {
+	if metric.Pass <= metric.Marginal {
+		return errors.New("pass score cannot be less than marginal score")
+	}
 	if metric.LifetimeMinutes == 0 && metric.EndTime == "" {
-		return errors.New("provider config map validation error: provide either lifetimeMinutes or end time")
+		return errors.New("provide either lifetimeMinutes or end time")
 	}
 	if metric.CanaryStartTime != metric.BaselineStartTime && metric.LifetimeMinutes == 0 {
-		return errors.New("provider config map validation error: both canaryStartTime and baselineStartTime should be kept same while using endTime argument for analysis")
+		return errors.New("both canaryStartTime and baselineStartTime should be kept same while using endTime argument for analysis")
 	}
 	if metric.LifetimeMinutes != 0 && metric.LifetimeMinutes < 3 {
-		return errors.New("provider config map validation error: lifetimeMinutes cannot be less than 3 minutes")
+		return errors.New("lifetimeMinutes cannot be less than 3 minutes")
 	}
 	if metric.IntervalTime != 0 && metric.IntervalTime < 3 {
-		return errors.New("provider config map validation error: intervalTime cannot be less than 3 minutes")
+		return errors.New("intervalTime cannot be less than 3 minutes")
 	}
 	if metric.LookBackType != "" && metric.IntervalTime == 0 {
-		return errors.New("provider config map validation error: intervalTime should be given along with lookBackType to perform interval analysis")
+		return errors.New("intervalTime should be given along with lookBackType to perform interval analysis")
 	}
 	return nil
 }
 
-// Return epoch values of the specific time provided along with lifetimeMinutes for the Run
-func (metric *OPSMXMetric) getTimeVariables() error {
-
-	var canaryStartTime string
-	var baselineStartTime string
-	tm := time.Now()
-
-	if metric.CanaryStartTime == "" {
-		canaryStartTime = fmt.Sprintf("%d", tm.UnixNano()/int64(time.Millisecond))
-	} else {
+func (metric *OPSMXMetric) setCanaryStartTime() error {
+	canaryStartTime := fmt.Sprintf("%d", time.Now().UnixMilli())
+	if metric.CanaryStartTime != "" {
 		tsStart, err := time.Parse(time.RFC3339, metric.CanaryStartTime)
 		if err != nil {
-			errorMsg := fmt.Sprintf("provider config map validation error: Error in parsing canaryStartTime: %v", err)
-			return errors.New(errorMsg)
+			return fmt.Errorf("error in parsing canaryStartTime: %v", err)
 		}
-		canaryStartTime = fmt.Sprintf("%d", tsStart.UnixNano()/int64(time.Millisecond))
+		canaryStartTime = fmt.Sprintf("%d", tsStart.UnixMilli())
 	}
+	metric.CanaryStartTime = canaryStartTime
+	return nil
+}
 
-	if metric.BaselineStartTime == "" {
-		baselineStartTime = fmt.Sprintf("%d", tm.UnixNano()/int64(time.Millisecond))
-	} else {
+func (metric *OPSMXMetric) setBaselineStartTime() error {
+	baselineStartTime := fmt.Sprintf("%d", time.Now().UnixMilli())
+	if metric.BaselineStartTime != "" {
 		tsStart, err := time.Parse(time.RFC3339, metric.BaselineStartTime)
 		if err != nil {
-			errorMsg := fmt.Sprintf("provider config map validation error: Error in parsing baselineStartTime: %v", err)
-			return errors.New(errorMsg)
+			return fmt.Errorf("error in parsing baselineStartTime: %v", err)
 		}
-		baselineStartTime = fmt.Sprintf("%d", tsStart.UnixNano()/int64(time.Millisecond))
+		baselineStartTime = fmt.Sprintf("%d", tsStart.UnixMilli())
 	}
+	metric.BaselineStartTime = baselineStartTime
+	return nil
+}
 
-	//If lifetimeMinutes not given calculate using endTime
+// TODO: refactor
+func (metric *OPSMXMetric) setIntervalTime() error {
 	if metric.LifetimeMinutes == 0 {
 		tsEnd, err := time.Parse(time.RFC3339, metric.EndTime)
 		if err != nil {
-			errorMsg := fmt.Sprintf("provider config map validation error: Error in parsing endTime: %v", err)
-			return errors.New(errorMsg)
+			return fmt.Errorf("provider config map validation error: Error in parsing endTime: %v", err)
 		}
+		//TODO: move this out
 		if metric.CanaryStartTime != "" && metric.CanaryStartTime > metric.EndTime {
 			err := errors.New("provider config map validation error: canaryStartTime cannot be greater than endTime")
 			return err
 		}
-		tsStart := tm
+		tsStart := time.Now()
+		//TODO: dont ignore the errors
 		if metric.CanaryStartTime != "" {
 			tsStart, _ = time.Parse(time.RFC3339, metric.CanaryStartTime)
 		}
@@ -300,132 +191,266 @@ func (metric *OPSMXMetric) getTimeVariables() error {
 		min, _ := time.ParseDuration(tsDifference.String())
 		metric.LifetimeMinutes = int(roundFloat(min.Minutes(), 0))
 	}
-	metric.BaselineStartTime = baselineStartTime
-	metric.CanaryStartTime = canaryStartTime
 	return nil
 }
-
-func getScopeValues(scope string) (string, error) {
-	splitScope := strings.Split(scope, ",")
-	for i, items := range splitScope {
-		if strings.Contains(items, "{{env.") {
-			extrctVal := strings.Split(items, "{{env.")
-			extractkey := strings.Split(extrctVal[1], "}}")
-			podName, ok := os.LookupEnv(extractkey[0])
-			if !ok {
-				err := fmt.Sprintf("analysisTemplate validation error: environment variable %s not set", extractkey[0])
-				return "", errors.New(err)
-			}
-			old := fmt.Sprintf("{{env.%s}}", extractkey[0])
-			testresult := strings.Replace(items, old, podName, 1)
-			splitScope[i] = testresult
+func (metric *OPSMXMetric) processServices(g *RpcPlugin, opsmxProfileData opsmxProfile, namespace string) ([]service, error) {
+	servicesArray := []service{}
+	for i, item := range metric.Services {
+		//TODO: check why this has been addded
+		// valid := false
+		serviceName := fmt.Sprintf("service%d", i+1)
+		if item.ServiceName != "" {
+			serviceName = item.ServiceName
 		}
-	}
-	scopeValue := strings.Join(splitScope, ",")
-	return scopeValue, nil
-}
-
-func getTemplateDataYaml(templateFileData []byte, template string, templateType string, ScopeVariables string) ([]byte, error) {
-	if templateType == "LOG" {
-		var logdata LogTemplateYaml
-		if err := yaml.Unmarshal([]byte(templateFileData), &logdata); err != nil {
-			errorMessage := fmt.Sprintf("gitops '%s' template config map validation error: %v", template, err)
-			return nil, errors.New(errorMessage)
+		if serviceExists(servicesArray, serviceName) {
+			return []service{}, fmt.Errorf("serviceName '%s' mentioned exists more than once", serviceName)
 		}
-		logdata.TemplateName = template
-		logdata.FilterKey = ScopeVariables
-		if len(logdata.Tags) >= 1 {
-			logdata.TagEnabled = true
-		}
-
-		var defaults LogTemplateYaml
-		err := json.Unmarshal([]byte(DefaultsErrorTopicsJson), &defaults)
+		gateName := fmt.Sprintf("gate%d", i+1)
+		isLog, err := metric.validateLogs(item, serviceName)
 		if err != nil {
-			return nil, err
+			return []service{}, err
 		}
-
-		var defaultErrorString []string
-		defaultErrorStringMapType := make(map[string]string)
-		for _, items := range defaults.ErrorTopics {
-			defaultErrorStringMapType[items.ErrorStrings] = items.Topic
-			defaultErrorString = append(defaultErrorString, items.ErrorStrings)
-		}
-
-		var errorStringsAvailable []string
-
-		for i, items := range logdata.ErrorTopics {
-			errorStringsAvailable = append(errorStringsAvailable, items.ErrorStrings)
-
-			if isExists(defaultErrorString, items.ErrorStrings) {
-				if items.Topic == defaultErrorStringMapType[items.ErrorStrings] {
-					logdata.ErrorTopics[i].Type = "default"
-				} else {
-					logdata.ErrorTopics[i].Type = "custom"
-				}
+		if isLog {
+			logTemplate := item.LogTemplateName
+			if logTemplate == "" {
+				logTemplate = metric.GlobalLogTemplate
 			}
-		}
+			serviceData := service{logMetric: "LOG",
+				serviceName:            serviceName,
+				serviceGate:            gateName,
+				template:               logTemplate,
+				scopeVariables:         item.LogScopeVariables,
+				canaryScopeVariables:   item.CanaryLogScope,
+				baselineScopeVariables: item.BaselineLogScope}
 
-		if !logdata.DisableDefaultsErrorTopics {
-			log.Info("loading defaults tags for log template")
-			for _, items := range defaults.ErrorTopics {
-				if !isExists(errorStringsAvailable, items.ErrorStrings) {
-					logdata.ErrorTopics = append(logdata.ErrorTopics, items)
+			if metric.GitOPS && item.LogTemplateVersion == "" {
+				shaLog, err := generateTemplateGitops(logTemplate, "LOG", item.LogScopeVariables, g, opsmxProfileData, namespace)
+				if err != nil {
+					return []service{}, err
 				}
+				serviceData.templateSha = shaLog
 			}
+			//TODO: handle more here
+			if item.LogTemplateVersion == "" {
+				serviceData.templateVersion = item.LogTemplateVersion
+			}
+			servicesArray = append(servicesArray, serviceData)
 		}
-		if logdata.ErrorTopics == nil {
-			logdata.ErrorTopics = make([]errorTopics, 0)
+		isMetric, err := metric.validateMetrics(item, serviceName)
+		if err != nil {
+			return []service{}, err
 		}
-		log.Info("processed template and converting to json", logdata)
-		return json.Marshal(logdata)
-	}
+		if isMetric {
+			metricTemplate := item.MetricTemplateName
+			if metricTemplate == "" {
+				metricTemplate = metric.GlobalMetricTemplate
+			}
+			serviceData := service{logMetric: "LOG",
+				serviceName:            serviceName,
+				serviceGate:            gateName,
+				template:               metricTemplate,
+				scopeVariables:         item.MetricScopeVariables,
+				canaryScopeVariables:   item.CanaryMetricScope,
+				baselineScopeVariables: item.BaselineMetricScope}
 
-	metricStruct, err := processYamlMetrics(templateFileData, template, ScopeVariables)
-	if err != nil {
-		return nil, err
+			if metric.GitOPS && item.LogTemplateVersion == "" {
+				shaMetric, err := generateTemplateGitops(metricTemplate, "METRIC", item.MetricScopeVariables, g, opsmxProfileData, namespace)
+				if err != nil {
+					return []service{}, err
+				}
+				serviceData.templateSha = shaMetric
+			}
+			//TODO: handle more here
+			if item.MetricTemplateVersion == "" {
+				serviceData.templateVersion = item.LogTemplateVersion
+			}
+			servicesArray = append(servicesArray, serviceData)
+		}
 	}
-	return json.Marshal(metricStruct)
-
+	return servicesArray, nil
 }
 
-func getTemplateData(client http.Client, secretData map[string]string, template string, templateType string, basePath string, ScopeVariables string) (string, error) {
-	log.Info("processing gitops template", template)
-	var templateData string
-	templatePath := filepath.Join(basePath, "templates/")
-	path := filepath.Join(templatePath, template)
-	templateFileData, err := os.ReadFile(path)
+func (metric *OPSMXMetric) generatePayload(opsmxProfileData opsmxProfile, services []service) (string, error) {
+
+	var intervalTime string
+	if metric.IntervalTime != 0 {
+		intervalTime = fmt.Sprintf("%d", metric.IntervalTime)
+	}
+
+	var opsmxdelay string
+	if metric.Delay != 0 {
+		opsmxdelay = fmt.Sprintf("%d", metric.Delay)
+	}
+
+	payload := jobPayload{Application: metric.Application,
+		SourceName: opsmxProfileData.sourceName,
+		SourceType: opsmxProfileData.cdIntegration,
+		CanaryConfig: canaryConfig{
+			LifetimeMinutes: fmt.Sprintf("%d", metric.LifetimeMinutes),
+			LookBackType:    metric.LookBackType,
+			IntervalTime:    intervalTime,
+			Delays:          opsmxdelay,
+			CanaryHealthCheckHandler: canaryHealthCheckHandler{
+				MinimumCanaryResultScore: fmt.Sprintf("%d", metric.Marginal),
+			},
+			CanarySuccessCriteria: canarySuccessCriteria{
+				CanaryResultScore: fmt.Sprintf("%d", metric.Pass),
+			},
+		},
+	}
+	payload.CanaryDeployments = metric.populateCanaryDeployment(services)
+	buffer, err := json.Marshal(payload)
 	if err != nil {
-		errorMsg := fmt.Sprintf("gitops '%s' template config map validation error: %v\n Action Required: Template has to be mounted on '/etc/config/templates' in AnalysisTemplate and must carry data element '%s'", template, err, template)
-		err = errors.New(errorMsg)
 		return "", err
 	}
-	log.Info("checking if json or yaml for template ", template)
-	if !isJSON(string(templateFileData)) {
-		log.Info("template not recognized in json format")
-		templateFileData, err = getTemplateDataYaml(templateFileData, template, templateType, ScopeVariables)
-		log.Info("json for template ", template, string(templateFileData))
+	return string(buffer), err
+
+}
+
+func (metric *OPSMXMetric) populateCanaryDeployment(services []service) []canaryDeployments {
+	canaryDeploymentsArray := []canaryDeployments{}
+	deployment := canaryDeployments{
+		BaselineStartTimeMs: metric.BaselineStartTime,
+		CanaryStartTimeMs:   metric.CanaryStartTime,
+		Baseline: &logMetric{
+			Log:    map[string]map[string]string{},
+			Metric: map[string]map[string]string{},
+		},
+		Canary: &logMetric{
+			Log:    map[string]map[string]string{},
+			Metric: map[string]map[string]string{},
+		},
+	}
+	for _, svc := range services {
+		if svc.logMetric == "LOG" {
+			deployment.Baseline.Log[svc.serviceName] = map[string]string{
+				svc.scopeVariables: svc.baselineScopeVariables,
+				"serviceGate":      svc.serviceGate,
+				"template":         svc.template,
+				"templateSha1":     svc.templateSha,
+				"templateVersion":  svc.templateVersion,
+			}
+			deployment.Canary.Log[svc.serviceName] = map[string]string{
+				svc.scopeVariables: svc.canaryScopeVariables,
+				"serviceGate":      svc.serviceGate,
+				"template":         svc.template,
+				"templateSha1":     svc.templateSha,
+				"templateVersion":  svc.templateVersion,
+			}
+		}
+		deployment.Baseline.Metric[svc.serviceName] = map[string]string{
+			svc.scopeVariables: svc.baselineScopeVariables,
+			"serviceGate":      svc.serviceGate,
+			"template":         svc.template,
+			"templateSha1":     svc.templateSha,
+			"templateVersion":  svc.templateVersion,
+		}
+		deployment.Canary.Metric[svc.serviceName] = map[string]string{
+			svc.scopeVariables: svc.canaryScopeVariables,
+			"serviceGate":      svc.serviceGate,
+			"template":         svc.template,
+			"templateSha1":     svc.templateSha,
+			"templateVersion":  svc.templateVersion,
+		}
+
+	}
+	canaryDeploymentsArray = append(canaryDeploymentsArray, deployment)
+	return canaryDeploymentsArray
+
+}
+
+func (metric *OPSMXMetric) validateLogs(item OPSMXService, serviceName string) (bool, error) {
+
+	var isLog bool
+	if item.LogScopeVariables == "" && item.BaselineLogScope != "" || item.LogScopeVariables == "" && item.CanaryLogScope != "" {
+		errorMsg := fmt.Sprintf("provider config map validation error: missing log Scope placeholder for the provided baseline/canary of service '%s'", serviceName)
+		return isLog, errors.New(errorMsg)
+	}
+	//For Log Analysis is to be added in analysis-run
+	if item.LogScopeVariables != "" {
+		isLog = true
+		//Check if no baseline or canary
+		if item.BaselineLogScope != "" && item.CanaryLogScope == "" {
+			errorMsg := fmt.Sprintf("provider config map validation error: missing canary for log analysis of service '%s'", serviceName)
+			return isLog, errors.New(errorMsg)
+		}
+		//Check if the number of placeholders provided dont match
+		if len(strings.Split(item.LogScopeVariables, ",")) != len(strings.Split(item.BaselineLogScope, ",")) || len(strings.Split(item.LogScopeVariables, ",")) != len(strings.Split(item.CanaryLogScope, ",")) {
+			errorMsg := fmt.Sprintf("provider config map validation error: mismatch in number of log scope variables and baseline/canary log scope of service '%s'", serviceName)
+			return isLog, errors.New(errorMsg)
+		}
+		if item.LogTemplateName == "" && metric.GlobalLogTemplate == "" {
+			errorMsg := fmt.Sprintf("provider config map validation error: provide either a service specific log template or global log template for service '%s'", serviceName)
+			return isLog, errors.New(errorMsg)
+		}
+	}
+	return isLog, nil
+}
+
+func (metric *OPSMXMetric) validateMetrics(item OPSMXService, serviceName string) (bool, error) {
+
+	var isMetric bool
+	if item.MetricScopeVariables == "" && item.BaselineMetricScope != "" || item.MetricScopeVariables == "" && item.CanaryMetricScope != "" {
+		errorMsg := fmt.Sprintf("provider config map validation error: missing metric Scope placeholder for the provided baseline/canary of service '%s'", serviceName)
+		return isMetric, errors.New(errorMsg)
+	}
+	//For metric analysis is to be added in analysis-run
+	if item.MetricScopeVariables != "" {
+		isMetric = true
+		//Check if no baseline or canary
+		if item.BaselineMetricScope == "" || item.CanaryMetricScope == "" {
+			errorMsg := fmt.Sprintf("provider config map validation error: missing baseline/canary for metric analysis of service '%s'", serviceName)
+			return isMetric, errors.New(errorMsg)
+		}
+		//Check if the number of placeholders provided dont match
+		if len(strings.Split(item.MetricScopeVariables, ",")) != len(strings.Split(item.BaselineMetricScope, ",")) || len(strings.Split(item.MetricScopeVariables, ",")) != len(strings.Split(item.CanaryMetricScope, ",")) {
+			errorMsg := fmt.Sprintf("provider config map validation error: mismatch in number of metric scope variables and baseline/canary metric scope of service '%s'", serviceName)
+			return isMetric, errors.New(errorMsg)
+		}
+		if item.MetricTemplateName == "" && metric.GlobalMetricTemplate == "" {
+			errorMsg := fmt.Sprintf("provider config map validation error: provide either a service specific metric template or global metric template for service: %s", serviceName)
+			return isMetric, errors.New(errorMsg)
+		}
+	}
+	return isMetric, nil
+}
+
+func generateTemplateGitops(templateName string, templateType string, scopeVars string, c *RpcPlugin, secret opsmxProfile, nameSpace string) (string, error) {
+	v1ConfigMap, err := c.kubeclientset.CoreV1().ConfigMaps(nameSpace).Get(context.TODO(), templateName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("gitops '%s' template config map validation error: %v\n Action Required: Template must carry data element '%s'", templateName, err, templateName)
+	}
+	templateDataCM, ok := v1ConfigMap.Data[templateName]
+	if !ok {
+		return "", errors.New("something went wrong")
+	}
+
+	templateFileData := []byte(templateDataCM)
+	if !isJSON(templateDataCM) {
+		templateFileData, err = getTemplateDataYaml(templateFileData, templateName, templateType, scopeVars)
 		if err != nil {
 			return "", err
 		}
 	} else {
 		checktemplateName := gjson.Get(string(templateFileData), "templateName")
 		if checktemplateName.String() == "" {
-			errmessage := fmt.Sprintf("gitops '%s' template config map validation error: template name not provided inside json", template)
+			errmessage := fmt.Sprintf("gitops '%s' template config map validation error: template name not provided inside json", templateName)
 			return "", errors.New(errmessage)
 		}
-		if template != checktemplateName.String() {
-			errmessage := fmt.Sprintf("gitops '%s' template config map validation error: Mismatch between templateName and data.%s key", template, template)
+		if templateName != checktemplateName.String() {
+			errmessage := fmt.Sprintf("gitops '%s' template config map validation error: Mismatch between templateName and data.%s key", templateName, templateName)
 			return "", errors.New(errmessage)
 		}
 	}
 
 	sha1Code := generateSHA1(string(templateFileData))
-	tempLink := fmt.Sprintf(templateApi, sha1Code, templateType, template)
-	s := []string{secretData["opsmxIsdUrl"], tempLink}
-	templateUrl := strings.Join(s, "")
+	templateUrl, err := getTemplateUrl(secret.opsmxIsdUrl, sha1Code, templateType, templateName)
+	if err != nil {
+		return "", err
+	}
 
 	log.Debug("sending a GET request to gitops API")
-	data, _, _, err := makeRequest(client, "GET", templateUrl, "", secretData["user"])
+	data, _, _, err := makeRequest(c.client, "GET", templateUrl, "", secret.user)
 	if err != nil {
 		return "", err
 	}
@@ -435,11 +460,11 @@ func getTemplateData(client http.Client, secretData map[string]string, template 
 		errorMessage := fmt.Sprintf("analysis Error: Expected bool response from gitops verifyTemplate response  Error: %v. Action: Check endpoint given in secret/providerConfig.", err)
 		return "", errors.New(errorMessage)
 	}
-	templateData = sha1Code
+	templateData := sha1Code
 	var templateCheckSave map[string]interface{}
 	if !templateVerification {
 		log.Debug("sending a POST request to gitops API")
-		data, _, _, err = makeRequest(client, "POST", templateUrl, string(templateFileData), secretData["user"])
+		data, _, _, err = makeRequest(c.client, "POST", templateUrl, string(templateFileData), secret.user)
 		if err != nil {
 			return "", err
 		}
@@ -456,365 +481,40 @@ func getTemplateData(client http.Client, secretData map[string]string, template 
 		}
 		errorss = strings.Replace(strings.Replace(errorss, "[", "", -1), "]", "", -1)
 		if templateCheckSave["status"] != "CREATED" {
-			err = fmt.Errorf("gitops '%s' template config map validation error: %s", template, errorss)
+			err = fmt.Errorf("gitops '%s' template config map validation error: %s", templateName, errorss)
 			return "", err
 		}
 	}
 	return templateData, nil
 }
 
-func (metric *OPSMXMetric) generatePayload(c *RpcPlugin, secretData map[string]string, basePath string) (string, error) {
-	var intervalTime string
-	if metric.IntervalTime != 0 {
-		intervalTime = fmt.Sprintf("%d", metric.IntervalTime)
-	}
-
-	var opsmxdelay string
-	if metric.Delay != 0 {
-		opsmxdelay = fmt.Sprintf("%d", metric.Delay)
-	}
-	var services []string
-	//Generate the payload
-	payload := jobPayload{
-		Application: metric.Application,
-		SourceName:  secretData["sourceName"],
-		SourceType:  secretData["cdIntegration"],
-		CanaryConfig: canaryConfig{
-			LifetimeMinutes: fmt.Sprintf("%d", metric.LifetimeMinutes),
-			LookBackType:    metric.LookBackType,
-			IntervalTime:    intervalTime,
-			Delays:          opsmxdelay,
-			CanaryHealthCheckHandler: canaryHealthCheckHandler{
-				MinimumCanaryResultScore: fmt.Sprintf("%d", metric.Pass),
-			},
-			CanarySuccessCriteria: canarySuccessCriteria{
-				CanaryResultScore: fmt.Sprintf("%d", metric.Pass),
-			},
-		},
-		CanaryDeployments: []canaryDeployments{},
-	}
-	if metric.Services != nil || len(metric.Services) != 0 {
-		deployment := canaryDeployments{
-			BaselineStartTimeMs: metric.BaselineStartTime,
-			CanaryStartTimeMs:   metric.CanaryStartTime,
-			Baseline: &logMetric{
-				Log:    map[string]map[string]string{},
-				Metric: map[string]map[string]string{},
-			},
-			Canary: &logMetric{
-				Log:    map[string]map[string]string{},
-				Metric: map[string]map[string]string{},
-			},
+func getTemplateDataYaml(templateFileData []byte, template string, templateType string, ScopeVariables string) ([]byte, error) {
+	if templateType == "LOG" {
+		logData, err := processYamlLogs(templateFileData, template, ScopeVariables)
+		if err != nil {
+			return nil, err
 		}
-		for i, item := range metric.Services {
-			valid := false
-			serviceName := fmt.Sprintf("service%d", i+1)
-			if item.ServiceName != "" {
-				serviceName = item.ServiceName
-			}
-			if isExists(services, serviceName) {
-				errorMsg := fmt.Sprintf("provider config map validation error: serviceName '%s' mentioned in provider Config exists more than once", serviceName)
-				return "", errors.New(errorMsg)
-			}
-			services = append(services, serviceName)
-			gateName := fmt.Sprintf("gate%d", i+1)
-			if item.LogScopeVariables == "" && item.BaselineLogScope != "" || item.LogScopeVariables == "" && item.CanaryLogScope != "" {
-				errorMsg := fmt.Sprintf("provider config map validation error: missing log Scope placeholder for the provided baseline/canary of service '%s'", serviceName)
-				err := errors.New(errorMsg)
-				if err != nil {
-					return "", err
-				}
-			}
-			//For Log Analysis is to be added in analysis-run
-			if item.LogScopeVariables != "" {
-				//Check if no baseline or canary
-				if item.BaselineLogScope != "" && item.CanaryLogScope == "" {
-					errorMsg := fmt.Sprintf("provider config map validation error: missing canary for log analysis of service '%s'", serviceName)
-					err := errors.New(errorMsg)
-					if err != nil {
-						return "", err
-					}
-				}
-				//Check if the number of placeholders provided dont match
-				if len(strings.Split(item.LogScopeVariables, ",")) != len(strings.Split(item.BaselineLogScope, ",")) || len(strings.Split(item.LogScopeVariables, ",")) != len(strings.Split(item.CanaryLogScope, ",")) {
-					errorMsg := fmt.Sprintf("provider config map validation error: mismatch in number of log scope variables and baseline/canary log scope of service '%s'", serviceName)
-					err := errors.New(errorMsg)
-					if err != nil {
-						return "", err
-					}
-				}
-				if item.LogTemplateName == "" && metric.GlobalLogTemplate == "" {
-					errorMsg := fmt.Sprintf("provider config map validation error: provide either a service specific log template or global log template for service '%s'", serviceName)
-					err := errors.New(errorMsg)
-					if err != nil {
-						return "", err
-					}
-				}
-
-				baslineLogScope, errors := getScopeValues(item.BaselineLogScope)
-				if errors != nil {
-					return "", errors
-				}
-				//Add mandatory field for baseline
-				deployment.Baseline.Log[serviceName] = map[string]string{
-					item.LogScopeVariables: baslineLogScope,
-					"serviceGate":          gateName,
-				}
-
-				canaryLogScope, errors := getScopeValues(item.CanaryLogScope)
-				if errors != nil {
-					return "", errors
-				}
-				//Add mandatory field for canary
-				deployment.Canary.Log[serviceName] = map[string]string{
-					item.LogScopeVariables: canaryLogScope,
-					"serviceGate":          gateName,
-				}
-
-				var tempName string
-				tempName = item.LogTemplateName
-				if item.LogTemplateName == "" {
-					tempName = metric.GlobalLogTemplate
-				}
-
-				//Add service specific templateName
-				deployment.Baseline.Log[serviceName]["template"] = tempName
-				deployment.Canary.Log[serviceName]["template"] = tempName
-
-				var templateData string
-				var err error
-				if metric.GitOPS && item.LogTemplateVersion == "" {
-					templateData, err = getTemplateData(c.client, secretData, tempName, "LOG", basePath, item.LogScopeVariables)
-					if err != nil {
-						return "", err
-					}
-				}
-
-				if metric.GitOPS && templateData != "" && item.LogTemplateVersion == "" {
-					deployment.Baseline.Log[serviceName]["templateSha1"] = templateData
-					deployment.Canary.Log[serviceName]["templateSha1"] = templateData
-				}
-				//Add non-mandatory field of Templateversion if provided
-				if item.LogTemplateVersion != "" {
-					deployment.Baseline.Log[serviceName]["templateVersion"] = item.LogTemplateVersion
-					deployment.Canary.Log[serviceName]["templateVersion"] = item.LogTemplateVersion
-				}
-				valid = true
-			}
-
-			if item.MetricScopeVariables == "" && item.BaselineMetricScope != "" || item.MetricScopeVariables == "" && item.CanaryMetricScope != "" {
-				errorMsg := fmt.Sprintf("provider config map validation error: missing metric Scope placeholder for the provided baseline/canary of service '%s'", serviceName)
-				err := errors.New(errorMsg)
-				if err != nil {
-					return "", err
-				}
-			}
-			//For metric analysis is to be added in analysis-run
-			if item.MetricScopeVariables != "" {
-				//Check if no baseline or canary
-				if item.BaselineMetricScope == "" || item.CanaryMetricScope == "" {
-					errorMsg := fmt.Sprintf("provider config map validation error: missing baseline/canary for metric analysis of service '%s'", serviceName)
-					err := errors.New(errorMsg)
-					if err != nil {
-						return "", err
-					}
-				}
-				//Check if the number of placeholders provided dont match
-				if len(strings.Split(item.MetricScopeVariables, ",")) != len(strings.Split(item.BaselineMetricScope, ",")) || len(strings.Split(item.MetricScopeVariables, ",")) != len(strings.Split(item.CanaryMetricScope, ",")) {
-					errorMsg := fmt.Sprintf("provider config map validation error: mismatch in number of metric scope variables and baseline/canary metric scope of service '%s'", serviceName)
-					err := errors.New(errorMsg)
-					if err != nil {
-						return "", err
-					}
-				}
-				if item.MetricTemplateName == "" && metric.GlobalMetricTemplate == "" {
-					errorMsg := fmt.Sprintf("provider config map validation error: provide either a service specific metric template or global metric template for service: %s", serviceName)
-					err := errors.New(errorMsg)
-					if err != nil {
-						return "", err
-					}
-				}
-
-				baselineMetricScope, errors := getScopeValues(item.BaselineMetricScope)
-				if errors != nil {
-					return "", errors
-				}
-				//Add mandatory field for baseline
-				deployment.Baseline.Metric[serviceName] = map[string]string{
-					item.MetricScopeVariables: baselineMetricScope,
-					"serviceGate":             gateName,
-				}
-
-				canaryMetricScope, errors := getScopeValues(item.CanaryMetricScope)
-				if errors != nil {
-					return "", errors
-				}
-				//Add mandatory field for canary
-				deployment.Canary.Metric[serviceName] = map[string]string{
-					item.MetricScopeVariables: canaryMetricScope,
-					"serviceGate":             gateName,
-				}
-
-				var tempName string
-				tempName = item.MetricTemplateName
-				if item.MetricTemplateName == "" {
-					tempName = metric.GlobalMetricTemplate
-				}
-
-				//Add templateName
-				deployment.Baseline.Metric[serviceName]["template"] = tempName
-				deployment.Canary.Metric[serviceName]["template"] = tempName
-
-				var templateData string
-				var err error
-				if metric.GitOPS && item.MetricTemplateVersion == "" {
-					templateData, err = getTemplateData(c.client, secretData, tempName, "METRIC", basePath, item.MetricScopeVariables)
-					if err != nil {
-						return "", err
-					}
-				}
-
-				if metric.GitOPS && templateData != "" && item.MetricTemplateVersion == "" {
-					deployment.Baseline.Metric[serviceName]["templateSha1"] = templateData
-					deployment.Canary.Metric[serviceName]["templateSha1"] = templateData
-				}
-
-				//Add non-mandatory field of Template Version if provided
-				if item.MetricTemplateVersion != "" {
-					deployment.Baseline.Metric[serviceName]["templateVersion"] = item.MetricTemplateVersion
-					deployment.Canary.Metric[serviceName]["templateVersion"] = item.MetricTemplateVersion
-				}
-				valid = true
-
-			}
-			//Check if no logs or metrics were provided
-			if !valid {
-				err := errors.New("provider config map validation error: at least one of log or metric context must be provided")
-				if err != nil {
-					return "", err
-				}
-			}
-		}
-		payload.CanaryDeployments = append(payload.CanaryDeployments, deployment)
-	} else {
-		//Check if no services were provided
-		err := errors.New("provider config map validation error: no services provided")
-		return "", err
+		return json.Marshal(logData)
 	}
-	buffer, err := json.Marshal(payload)
+	metricStruct, err := processYamlMetrics(templateFileData, template, ScopeVariables)
 	if err != nil {
-		return "", err
-	}
-	return string(buffer), err
-}
-
-// Evaluate canaryScore and accordingly set the AnalysisPhase
-func evaluateResult(score int, pass int) v1alpha1.AnalysisPhase {
-	if score >= pass {
-		return v1alpha1.AnalysisPhaseSuccessful
-	}
-	return v1alpha1.AnalysisPhaseFailed
-}
-
-// // Extract the canaryScore and evaluateResult
-// func (metric *OPSMXMetric) processResume(data []byte) (v1alpha1.AnalysisPhase, string, error) {
-// 	var (
-// 		canaryScore string
-// 		result      map[string]interface{}
-// 		finalScore  map[string]interface{}
-// 	)
-
-// 	err := json.Unmarshal(data, &result)
-// 	if err != nil {
-// 		errorMessage := fmt.Sprintf("analysis Error: Error in post processing canary Response. Error: %v", err)
-// 		return "", "", errors.New(errorMessage)
-// 	}
-// 	jsonBytes, _ := json.MarshalIndent(result["canaryResult"], "", "   ")
-// 	err = json.Unmarshal(jsonBytes, &finalScore)
-// 	if err != nil {
-// 		return "", "", err
-// 	}
-// 	if finalScore["overallScore"] == nil {
-// 		canaryScore = "0"
-// 	} else {
-// 		canaryScore = fmt.Sprintf("%v", finalScore["overallScore"])
-// 	}
-
-// 	var score int
-// 	// var err error
-// 	if strings.Contains(canaryScore, ".") {
-// 		floatScore, err := strconv.ParseFloat(canaryScore, 64)
-// 		if err != nil {
-// 			return "", "", err
-// 		}
-// 		score = int(roundFloat(floatScore, 0))
-// 	} else {
-// 		score, err = strconv.Atoi(canaryScore)
-// 		if err != nil {
-// 			return "", "", err
-// 		}
-// 	}
-
-// 	Phase := evaluateResult(score, int(metric.Pass))
-// 	return Phase, fmt.Sprintf("%v", score), nil
-// }
-
-func (metric *OPSMXMetric) getDataSecret(c *RpcPlugin, ar *v1alpha1.AnalysisRun) (map[string]string, error) {
-
-	secretData := map[string]string{}
-	secretName := defaultSecretName
-
-	secret, err := c.kubeclientset.CoreV1().Secrets(ar.Namespace).Get(context.TODO(), secretName, metav1.GetOptions{})
-	if err != nil {
-		return secretData, err
-	}
-
-	secretUser, ok := secret.Data["user"]
-	if !ok {
-		err = errors.New("opsmx profile secret validation error: `user` key not present in the secret file\n Action Required: secret file must carry data element 'user'")
-		return secretData, err
-	}
-
-	secretOpsmxIsdUrl, ok := secret.Data["opsmxIsdUrl"]
-	if !ok {
-		err = errors.New("opsmx profile secret validation error: `opsmxIsdUrl` key not present in the secret file\n Action Required: secret file must carry data element 'opsmxIsdUrl'")
-		return secretData, err
-	}
-	secretsourcename, ok := secret.Data["sourceName"]
-	if !ok {
-		err = errors.New("opsmx profile secret validation error: `sourceName` key not present in the secret file\n Action Required: secret file must carry data element 'sourceName'")
-		return secretData, err
-	}
-	secretcdintegration, ok := secret.Data["cdIntegration"]
-	if !ok {
-		err = errors.New("opsmx profile secret validation error: `cdIntegration` key not present in the secret file\n Action Required: secret file must carry data element 'cdIntegration'")
-		return secretData, err
-	}
-
-	opsmxIsdURL := metric.OpsmxIsdUrl
-	if opsmxIsdURL == "" {
-		opsmxIsdURL = string(secretOpsmxIsdUrl)
-	}
-	secretData["opsmxIsdUrl"] = opsmxIsdURL
-
-	user := metric.User
-	if user == "" {
-		user = string(secretUser)
-	}
-	secretData["user"] = user
-
-	var cdIntegration string
-	if string(secretcdintegration) == "true" {
-		cdIntegration = cdIntegrationArgoCD
-	} else if string(secretcdintegration) == "false" {
-		cdIntegration = cdIntegrationArgoRollouts
-	} else {
-		err := errors.New("opsmx profile secret validation error: cdIntegration should be either true or false")
 		return nil, err
 	}
-	secretData["cdIntegration"] = cdIntegration
-
-	secretData["sourceName"] = string(secretsourcename)
-
-	return secretData, nil
+	return json.Marshal(metricStruct)
 }
+
+// func (metric *OPSMXMetric) checkISDUrl(c *RpcPlugin, opsmxIsdUrl string) error {
+// 	resp, err := c.client.Get(opsmxIsdUrl)
+// 	if err != nil && metric.OpsmxIsdUrl != "" && !strings.Contains(err.Error(), "timeout") {
+// 		errorMsg := fmt.Sprintf("provider config map validation error: incorrect opsmxIsdUrl: %v", opsmxIsdUrl)
+// 		return errors.New(errorMsg)
+// 	} else if err != nil && metric.OpsmxIsdUrl == "" && !strings.Contains(err.Error(), "timeout") {
+// 		errorMsg := fmt.Sprintf("opsmx profile secret validation error: incorrect opsmxIsdUrl: %v", opsmxIsdUrl)
+// 		return errors.New(errorMsg)
+// 	} else if err != nil {
+// 		return errors.New(err.Error())
+// 	} else if resp.StatusCode != 200 {
+// 		return errors.New(resp.Status)
+// 	}
+// 	return nil
+// }

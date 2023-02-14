@@ -7,7 +7,10 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // func getNamespace() string {
@@ -25,6 +28,7 @@ func roundFloat(val float64, precision uint) float64 {
 	return math.Round(val*ratio) / ratio
 }
 
+// TODO: Refactor
 func makeRequest(client http.Client, requestType string, url string, body string, user string) ([]byte, string, string, error) {
 	reqBody := strings.NewReader(body)
 	req, _ := http.NewRequest(
@@ -63,6 +67,15 @@ func isExists(list []string, item string) bool {
 	return false
 }
 
+func serviceExists(list []service, serviceName string) bool {
+	for _, v := range list {
+		if v.serviceName == serviceName {
+			return true
+		}
+	}
+	return false
+}
+
 func isJSON(s string) bool {
 	var j map[string]interface{}
 	if err := json.Unmarshal([]byte(s), &j); err != nil {
@@ -76,4 +89,26 @@ func generateSHA1(s string) string {
 	h.Write([]byte(s))
 	sha1_hash := hex.EncodeToString(h.Sum(nil))
 	return sha1_hash
+}
+
+func isUrl(str string) bool {
+	u, err := url.Parse(str)
+	if err != nil {
+		log.Errorf("Error in parsing url: %v", err)
+	}
+	log.Debugf("Parsed url: %v", u)
+	return err == nil && u.Scheme != "" && u.Host != ""
+}
+
+func getTemplateUrl(opsmxUrl string, sha1Code string, templateType string, templateName string) (string, error) {
+	urlParse, err := url.Parse(opsmxUrl)
+	if err != nil {
+		return "", err
+	}
+	values := urlParse.Query()
+	values.Add("sha1", sha1Code)
+	values.Add("templateType", templateType)
+	values.Add("templateName", templateName)
+	urlParse.RawQuery = values.Encode()
+	return urlParse.String(), nil
 }

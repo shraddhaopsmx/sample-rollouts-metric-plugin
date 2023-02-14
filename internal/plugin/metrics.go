@@ -3,7 +3,6 @@ package plugin
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
@@ -151,20 +150,4 @@ func processYamlMetrics(templateData []byte, templateName string, scopeVariables
 	}
 	log.Info("processed template and converting to json", metric)
 	return metric, nil
-}
-
-func (metric *OPSMXMetric) checkISDUrl(c *RpcPlugin, opsmxIsdUrl string) error {
-	resp, err := c.client.Get(opsmxIsdUrl)
-	if err != nil && metric.OpsmxIsdUrl != "" && !strings.Contains(err.Error(), "timeout") {
-		errorMsg := fmt.Sprintf("provider config map validation error: incorrect opsmxIsdUrl: %v", opsmxIsdUrl)
-		return errors.New(errorMsg)
-	} else if err != nil && metric.OpsmxIsdUrl == "" && !strings.Contains(err.Error(), "timeout") {
-		errorMsg := fmt.Sprintf("opsmx profile secret validation error: incorrect opsmxIsdUrl: %v", opsmxIsdUrl)
-		return errors.New(errorMsg)
-	} else if err != nil {
-		return errors.New(err.Error())
-	} else if resp.StatusCode != 200 {
-		return errors.New(resp.Status)
-	}
-	return nil
 }

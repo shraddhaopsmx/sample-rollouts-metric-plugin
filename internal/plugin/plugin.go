@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +42,13 @@ type RpcPlugin struct {
 	client        http.Client
 }
 
+type opsmxProfile struct {
+	cdIntegration string
+	opsmxIsdUrl   string
+	sourceName    string
+	user          string
+}
+
 func (g *RpcPlugin) NewMetricsPlugin(metric v1alpha1.Metric) types.RpcError {
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -59,54 +67,37 @@ func (g *RpcPlugin) NewMetricsPlugin(metric v1alpha1.Metric) types.RpcError {
 	return types.RpcError{}
 }
 
-func (g *RpcPlugin) Run(anaysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metric) v1alpha1.Measurement {
+func (g *RpcPlugin) Run(analysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metric) v1alpha1.Measurement {
 	startTime := timeutil.MetaNow()
 	newMeasurement := v1alpha1.Measurement{
 		StartedAt: &startTime,
 	}
-
 	OPSMXMetric := OPSMXMetric{}
 	if err := json.Unmarshal(metric.Provider.Plugin[opsmxPlugin], &OPSMXMetric); err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, err)
 	}
-	log.Info("The metric is ---")
-	res2B, _ := json.Marshal(OPSMXMetric)
-	log.Info("It is ----")
-	log.Infof(string(res2B))
-	if err := OPSMXMetric.basicChecks(); err != nil {
+	opsmxProfileData, err := getOpsmxProfile(g, OPSMXMetric, analysisRun.Namespace)
+	if err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, err)
 	}
-
-	secretData, err := OPSMXMetric.getDataSecret(g, anaysisRun)
+	if !isUrl(OPSMXMetric.OpsmxIsdUrl) {
+		return metricutil.MarkMeasurementError(newMeasurement, fmt.Errorf("error in processing url %s", opsmxProfileData.opsmxIsdUrl))
+	}
+	payload, err := OPSMXMetric.process(g, opsmxProfileData, analysisRun.Namespace)
+	if err != nil {
+		return metricutil.MarkMeasurementError(newMeasurement, err)
+	}
+	canaryurl, err := url.JoinPath(opsmxProfileData.opsmxIsdUrl, v5configIdLookupURLFormat)
 	if err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, err)
 	}
 
-	if err := OPSMXMetric.checkISDUrl(g, secretData["opsmxIsdUrl"]); err != nil {
-		return metricutil.MarkMeasurementError(newMeasurement, err)
-	}
-
-	err = OPSMXMetric.getTimeVariables()
-	if err != nil {
-		return metricutil.MarkMeasurementError(newMeasurement, err)
-	}
-
-	log.Info("generating the payload")
-	canaryurl, err := url.JoinPath(secretData["opsmxIsdUrl"], v5configIdLookupURLFormat)
-	if err != nil {
-		return metricutil.MarkMeasurementError(newMeasurement, err)
-	}
-	payload, err := OPSMXMetric.generatePayload(g, secretData, "/tmp")
-	if err != nil {
-		return metricutil.MarkMeasurementError(newMeasurement, err)
-	}
 	log.Info(payload)
 	log.Info("sending a POST request to registerCanary with the payload")
-	data, scoreURL, urlToken, err := makeRequest(g.client, "POST", canaryurl, payload, secretData["user"])
+	data, scoreURL, urlToken, err := makeRequest(g.client, "POST", canaryurl, payload, opsmxProfileData.user)
 	if err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, err)
 	}
-	//Struct to record canary Response
 	type canaryResponse struct {
 		Error    string      `json:"error,omitempty"`
 		Message  string      `json:"message,omitempty"`
@@ -129,7 +120,7 @@ func (g *RpcPlugin) Run(anaysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metric
 	if scoreURL == "" {
 		return metricutil.MarkMeasurementError(newMeasurement, errors.New("analysis Error: score url not found"))
 	}
-	data, _, _, err = makeRequest(g.client, "GET", scoreURL, "", secretData["user"])
+	data, _, _, err = makeRequest(g.client, "GET", scoreURL, "", opsmxProfileData.user)
 	if err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, err)
 	}
@@ -139,8 +130,7 @@ func (g *RpcPlugin) Run(anaysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metric
 
 	err = json.Unmarshal(data, &status)
 	if err != nil {
-		errorMessage := fmt.Sprintf("analysis Error: Error in post processing canary Response: %v", err)
-		return metricutil.MarkMeasurementError(newMeasurement, errors.New(errorMessage))
+		return metricutil.MarkMeasurementError(newMeasurement, fmt.Errorf("analysis Error: Error in post processing canary Response: %v", err))
 	}
 	jsonBytes, _ := json.MarshalIndent(status["canaryResult"], "", "   ")
 	err = json.Unmarshal(jsonBytes, &reportUrlJson)
@@ -148,10 +138,8 @@ func (g *RpcPlugin) Run(anaysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metric
 		return metricutil.MarkMeasurementError(newMeasurement, err)
 	}
 	reportUrl := reportUrlJson["canaryReportURL"]
-
 	mapMetadata := make(map[string]string)
 	mapMetadata["canaryId"] = string(canary.CanaryId)
-	mapMetadata["gateUrl"] = secretData["gateUrl"]
 	mapMetadata["reportUrl"] = fmt.Sprintf("%s", reportUrl)
 	mapMetadata["reportId"] = urlToken
 
@@ -191,7 +179,7 @@ func processResume(data []byte, metric OPSMXMetric, measurement v1alpha1.Measure
 		score, _ = strconv.Atoi(canaryScore)
 	}
 	measurement.Value = canaryScore
-	measurement.Phase = evaluateResult(score, metric.Pass)
+	measurement.Phase = evaluateResult(score, metric.Pass, metric.Marginal)
 	if measurement.Phase == "Failed" && metric.LookBackType != "" {
 		measurement.Metadata["interval analysis message"] = fmt.Sprintf("Interval Analysis Failed at intervalNo. %s", measurement.Metadata["Current intervalNo"])
 	}
@@ -204,17 +192,17 @@ func (g *RpcPlugin) Resume(analysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Me
 		return metricutil.MarkMeasurementError(measurement, err)
 	}
 
-	secretData, err := OPSMXMetric.getDataSecret(g, analysisRun)
+	opsmxProfile, err := getOpsmxProfile(g, OPSMXMetric, analysisRun.Namespace)
 	if err != nil {
 		return metricutil.MarkMeasurementError(measurement, err)
 	}
 
-	scoreURL, err := url.JoinPath(secretData["opsmxIsdUrl"], scoreUrlFormat, measurement.Metadata["canaryId"])
+	scoreURL, err := url.JoinPath(opsmxProfile.opsmxIsdUrl, scoreUrlFormat, measurement.Metadata["canaryId"])
 	if err != nil {
 		return metricutil.MarkMeasurementError(measurement, err)
 	}
 
-	data, _, _, err := makeRequest(g.client, "GET", scoreURL, "", secretData["user"])
+	data, _, _, err := makeRequest(g.client, "GET", scoreURL, "", opsmxProfile.user)
 	if err != nil {
 		return metricutil.MarkMeasurementError(measurement, err)
 	}
@@ -274,4 +262,83 @@ func NewHttpClient() http.Client {
 		Timeout: defaultTimeout * time.Second,
 	}
 	return c
+}
+
+// Evaluate canaryScore and accordingly set the AnalysisPhase
+func evaluateResult(score int, pass int, marginal int) v1alpha1.AnalysisPhase {
+	if score >= pass {
+		return v1alpha1.AnalysisPhaseSuccessful
+	}
+	if score < pass && score >= marginal {
+		return v1alpha1.AnalysisPhaseInconclusive
+	}
+	return v1alpha1.AnalysisPhaseFailed
+}
+
+func getSecretData(g *RpcPlugin, metric OPSMXMetric, namespace string) (opsmxProfile, error) {
+	secretName := defaultSecretName
+	if metric.Profile != "" {
+		secretName = metric.Profile
+	}
+	secret := opsmxProfile{}
+
+	v1Secret, err := g.kubeclientset.CoreV1().Secrets(namespace).Get(context.TODO(), secretName, metav1.GetOptions{})
+	if err != nil {
+		return opsmxProfile{}, err
+	}
+
+	secretUser, ok := v1Secret.Data["user"]
+	if !ok {
+		err = errors.New("opsmx profile secret validation error: `user` key not present in the secret file\n Action Required: secret file must carry data element 'user'")
+		return opsmxProfile{}, err
+	}
+	secret.user = string(secretUser)
+
+	secretOpsmxIsdUrl, ok := v1Secret.Data["opsmxIsdUrl"]
+	if !ok {
+		err = errors.New("opsmx profile secret validation error: `opsmxIsdUrl` key not present in the secret file\n Action Required: secret file must carry data element 'opsmxIsdUrl'")
+		return opsmxProfile{}, err
+	}
+	secret.opsmxIsdUrl = string(secretOpsmxIsdUrl)
+
+	secretSourceName, ok := v1Secret.Data["sourceName"]
+	if !ok {
+		err = errors.New("opsmx profile secret validation error: `sourceName` key not present in the secret file\n Action Required: secret file must carry data element 'sourceName'")
+		return opsmxProfile{}, err
+	}
+	secret.sourceName = string(secretSourceName)
+
+	secretcdintegration, ok := v1Secret.Data["cdIntegration"]
+	if !ok {
+		err = errors.New("opsmx profile secret validation error: `cdIntegration` key not present in the secret file\n Action Required: secret file must carry data element 'cdIntegration'")
+		return opsmxProfile{}, err
+	}
+	secret.cdIntegration = string(secretcdintegration)
+
+	//TODO: Check
+	if secret.cdIntegration != "true" && secret.cdIntegration != "false" {
+		err := errors.New("opsmx profile secret validation error: cdIntegration should be either true or false")
+		return opsmxProfile{}, err
+	}
+
+	return secret, nil
+}
+
+func getOpsmxProfile(g *RpcPlugin, metric OPSMXMetric, namespace string) (opsmxProfile, error) {
+	s, err := getSecretData(g, metric, namespace)
+	if err != nil {
+		return opsmxProfile{}, err
+	}
+	if metric.OpsmxIsdUrl != "" {
+		s.opsmxIsdUrl = metric.OpsmxIsdUrl
+	}
+	if metric.User != "" {
+		s.user = metric.User
+	}
+	cdIntegration := cdIntegrationArgoRollouts
+	if s.cdIntegration == "true" {
+		cdIntegration = cdIntegrationArgoCD
+	}
+	s.cdIntegration = cdIntegration
+	return s, nil
 }
