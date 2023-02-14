@@ -91,8 +91,8 @@ func generateSHA1(s string) string {
 	return sha1_hash
 }
 
-func isUrl(str string) bool {
-	u, err := url.Parse(str)
+func isUrl(s string) bool {
+	u, err := url.Parse(s)
 	if err != nil {
 		log.Errorf("Error in parsing url: %v", err)
 	}
