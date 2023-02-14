@@ -142,6 +142,7 @@ func (g *RpcPlugin) Run(analysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metri
 	mapMetadata["canaryId"] = string(canary.CanaryId)
 	mapMetadata["reportUrl"] = fmt.Sprintf("%s", reportUrl)
 	mapMetadata["reportId"] = urlToken
+	mapMetadata["payload"] = payload
 
 	resumeTime := metav1.NewTime(timeutil.Now().Add(resumeAfter))
 	newMeasurement.Metadata = mapMetadata

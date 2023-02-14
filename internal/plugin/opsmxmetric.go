@@ -462,6 +462,7 @@ func generateTemplateGitops(templateName string, templateType string, scopeVars 
 	}
 	templateData := sha1Code
 	var templateCheckSave map[string]interface{}
+	//TODO: refactor
 	if !templateVerification {
 		log.Debug("sending a POST request to gitops API")
 		data, _, _, err = makeRequest(c.client, "POST", templateUrl, string(templateFileData), secret.user)
