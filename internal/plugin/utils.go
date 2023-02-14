@@ -99,7 +99,12 @@ func generateSHA1(s string) string {
 // }
 
 func getTemplateUrl(opsmxUrl string, sha1Code string, templateType string, templateName string) (string, error) {
-	urlParse, err := url.Parse(opsmxUrl)
+	_url, err := url.JoinPath(opsmxUrl, templateApi)
+	if err != nil {
+		return "", err
+	}
+
+	urlParse, err := url.Parse(_url)
 	if err != nil {
 		return "", err
 	}

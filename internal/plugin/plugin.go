@@ -24,7 +24,8 @@ import (
 )
 
 const (
-	templateApi               = "/autopilot/api/v5/external/template?sha1=%s&templateType=%s&templateName=%s"
+	// templateApi               = "/autopilot/api/v5/external/template?sha1=%s&templateType=%s&templateName=%s"
+	templateApi               = "/autopilot/api/v5/external/template"
 	v5configIdLookupURLFormat = `/autopilot/api/v5/registerCanary`
 	scoreUrlFormat            = `/autopilot/v5/canaries/`
 	resumeAfter               = 3 * time.Second
