@@ -231,7 +231,7 @@ func (metric *OPSMXMetric) processServices(g *RpcPlugin, opsmxProfileData opsmxP
 				serviceData.templateSha = shaLog
 			}
 			//TODO: handle more here
-			if item.LogTemplateVersion == "" {
+			if item.LogTemplateVersion != "" {
 				serviceData.templateVersion = item.LogTemplateVersion
 			}
 			servicesArray = append(servicesArray, serviceData)
@@ -261,7 +261,7 @@ func (metric *OPSMXMetric) processServices(g *RpcPlugin, opsmxProfileData opsmxP
 				serviceData.templateSha = shaMetric
 			}
 			//TODO: handle more here
-			if item.MetricTemplateVersion == "" {
+			if item.MetricTemplateVersion != "" {
 				serviceData.templateVersion = item.LogTemplateVersion
 			}
 			servicesArray = append(servicesArray, serviceData)
@@ -327,32 +327,40 @@ func (metric *OPSMXMetric) populateCanaryDeployment(services []service) []canary
 				svc.scopeVariables: svc.baselineScopeVariables,
 				"serviceGate":      svc.serviceGate,
 				"template":         svc.template,
-				"templateSha1":     svc.templateSha,
-				"templateVersion":  svc.templateVersion,
 			}
 			deployment.Canary.Log[svc.serviceName] = map[string]string{
 				svc.scopeVariables: svc.canaryScopeVariables,
 				"serviceGate":      svc.serviceGate,
 				"template":         svc.template,
-				"templateSha1":     svc.templateSha,
-				"templateVersion":  svc.templateVersion,
+			}
+			if svc.templateSha != "" {
+				deployment.Baseline.Log[svc.serviceName]["templateSha1"] = svc.templateSha
+				deployment.Canary.Log[svc.serviceName]["templateSha1"] = svc.templateSha
+			}
+			if svc.templateVersion != "" {
+				deployment.Baseline.Log[svc.serviceName]["templateVersion"] = svc.templateVersion
+				deployment.Canary.Log[svc.serviceName]["templateVersion"] = svc.templateVersion
+			}
+		} else {
+			deployment.Baseline.Metric[svc.serviceName] = map[string]string{
+				svc.scopeVariables: svc.baselineScopeVariables,
+				"serviceGate":      svc.serviceGate,
+				"template":         svc.template,
+			}
+			deployment.Canary.Metric[svc.serviceName] = map[string]string{
+				svc.scopeVariables: svc.canaryScopeVariables,
+				"serviceGate":      svc.serviceGate,
+				"template":         svc.template,
+			}
+			if svc.templateSha != "" {
+				deployment.Baseline.Metric[svc.serviceName]["templateSha1"] = svc.templateSha
+				deployment.Canary.Metric[svc.serviceName]["templateSha1"] = svc.templateSha
+			}
+			if svc.templateVersion != "" {
+				deployment.Baseline.Metric[svc.serviceName]["templateVersion"] = svc.templateVersion
+				deployment.Canary.Metric[svc.serviceName]["templateVersion"] = svc.templateVersion
 			}
 		}
-		deployment.Baseline.Metric[svc.serviceName] = map[string]string{
-			svc.scopeVariables: svc.baselineScopeVariables,
-			"serviceGate":      svc.serviceGate,
-			"template":         svc.template,
-			"templateSha1":     svc.templateSha,
-			"templateVersion":  svc.templateVersion,
-		}
-		deployment.Canary.Metric[svc.serviceName] = map[string]string{
-			svc.scopeVariables: svc.canaryScopeVariables,
-			"serviceGate":      svc.serviceGate,
-			"template":         svc.template,
-			"templateSha1":     svc.templateSha,
-			"templateVersion":  svc.templateVersion,
-		}
-
 	}
 	canaryDeploymentsArray = append(canaryDeploymentsArray, deployment)
 	return canaryDeploymentsArray
