@@ -80,9 +80,9 @@ func (g *RpcPlugin) Run(analysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metri
 	if err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, err)
 	}
-	if !isUrl(OPSMXMetric.OpsmxIsdUrl) {
-		return metricutil.MarkMeasurementError(newMeasurement, fmt.Errorf("error in processing url %s", opsmxProfileData.opsmxIsdUrl))
-	}
+	// if !isUrl(OPSMXMetric.OpsmxIsdUrl) {
+	// 	return metricutil.MarkMeasurementError(newMeasurement, fmt.Errorf("error in processing url %s", opsmxProfileData.opsmxIsdUrl))
+	// }
 	payload, err := OPSMXMetric.process(g, opsmxProfileData, analysisRun.Namespace)
 	if err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, err)
