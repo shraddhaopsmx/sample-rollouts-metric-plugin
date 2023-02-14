@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // func getNamespace() string {
@@ -89,14 +91,14 @@ func generateSHA1(s string) string {
 	return sha1_hash
 }
 
-// func isUrl(str string) bool {
-// 	u, err := url.Parse(str)
-// 	if err != nil {
-// 		log.Errorf("Error in parsing url: %v", err)
-// 	}
-// 	log.Infof("Parsed url: %v", u)
-// 	return err == nil && u.Scheme != "" && u.Host != ""
-// }
+func isUrl(str string) bool {
+	u, err := url.Parse(str)
+	if err != nil {
+		log.Errorf("Error in parsing url: %v", err)
+	}
+	log.Infof("Parsed url: %v", u)
+	return err == nil && u.Scheme != "" && u.Host != ""
+}
 
 func getTemplateUrl(opsmxUrl string, sha1Code string, templateType string, templateName string) (string, error) {
 	_url, err := url.JoinPath(opsmxUrl, templateApi)
