@@ -253,7 +253,7 @@ func (metric *OPSMXMetric) processServices(g *RpcPlugin, opsmxProfileData opsmxP
 				canaryScopeVariables:   item.CanaryMetricScope,
 				baselineScopeVariables: item.BaselineMetricScope}
 
-			if metric.GitOPS && item.LogTemplateVersion == "" {
+			if metric.GitOPS && item.MetricTemplateVersion == "" {
 				shaMetric, err := generateTemplateGitops(metricTemplate, "METRIC", item.MetricScopeVariables, g, opsmxProfileData, namespace)
 				if err != nil {
 					return []service{}, err
