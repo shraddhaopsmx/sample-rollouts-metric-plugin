@@ -245,7 +245,7 @@ func (metric *OPSMXMetric) processServices(g *RpcPlugin, opsmxProfileData opsmxP
 			if metricTemplate == "" {
 				metricTemplate = metric.GlobalMetricTemplate
 			}
-			serviceData := service{logMetric: "LOG",
+			serviceData := service{logMetric: "METRIC",
 				serviceName:            serviceName,
 				serviceGate:            gateName,
 				template:               metricTemplate,
