@@ -457,7 +457,8 @@ func generateTemplateGitops(templateName string, templateType string, scopeVars 
 		return "", err
 	}
 
-	log.Debug("sending a GET request to gitops API")
+	log.Info("sending a GET request to gitops API")
+	log.Info(templateUrl)
 	data, _, _, err := makeRequest(c.client, "GET", templateUrl, "", secret.user)
 	if err != nil {
 		return "", err
@@ -472,7 +473,7 @@ func generateTemplateGitops(templateName string, templateType string, scopeVars 
 	var templateCheckSave map[string]interface{}
 	//TODO: refactor
 	if !templateVerification {
-		log.Debug("sending a POST request to gitops API")
+		log.Info("sending a POST request to gitops API")
 		data, _, _, err = makeRequest(c.client, "POST", templateUrl, string(templateFileData), secret.user)
 		if err != nil {
 			return "", err
@@ -481,7 +482,7 @@ func generateTemplateGitops(templateName string, templateType string, scopeVars 
 		if err != nil {
 			return "", err
 		}
-		log.Debugf("the value of templateCheckSave var is %v", templateCheckSave)
+		log.Infof("the value of templateCheckSave var is %v", templateCheckSave)
 		var errorss string
 		if templateCheckSave["errorMessage"] != nil && templateCheckSave["errorMessage"] != "" {
 			errorss = fmt.Sprintf("%v", templateCheckSave["errorMessage"])

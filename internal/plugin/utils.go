@@ -94,7 +94,7 @@ func generateSHA1(s string) string {
 // 	if err != nil {
 // 		log.Errorf("Error in parsing url: %v", err)
 // 	}
-// 	log.Debugf("Parsed url: %v", u)
+// 	log.Infof("Parsed url: %v", u)
 // 	return err == nil && u.Scheme != "" && u.Host != ""
 // }
 
