@@ -3,14 +3,19 @@ package plugin
 import (
 	"context"
 	"encoding/json"
-	"github.com/argoproj/argo-rollouts/metricproviders/plugin/rpc"
 	"testing"
 	"time"
 
+	"github.com/argoproj/argo-rollouts/metricproviders/plugin/rpc"
 	"github.com/argoproj/argo-rollouts/pkg/apis/rollouts/v1alpha1"
-	log "github.com/sirupsen/logrus"
-
 	goPlugin "github.com/hashicorp/go-plugin"
+	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	kubetesting "k8s.io/client-go/testing"
 )
 
 var testHandshake = goPlugin.HandshakeConfig{
@@ -104,4 +109,145 @@ func TestRunSuccessfully(t *testing.T) {
 	// Canceling should cause an exit
 	cancel()
 	<-closeCh
+}
+
+func TestOpsmxProfile(t *testing.T) {
+
+	logCtx := *log.WithFields(log.Fields{"plugin-test": "opsmx"})
+
+	rpcPluginImp := &RpcPlugin{
+		LogCtx: logCtx,
+		client: NewHttpClient(),
+	}
+
+	opsmxMetric := OPSMXMetric{Application: "newapp",
+		Profile:         "opsmx-profile-test",
+		LifetimeMinutes: 9,
+		Pass:            90,
+		Marginal:        85,
+		Services: []OPSMXService{{LogTemplateName: "logtemp",
+			LogScopeVariables: "pod_name",
+			CanaryLogScope:    "podHashCanary",
+			BaselineLogScope:  "podHashBaseline",
+		}},
+	}
+	t.Run("cdIntegration is missing in the secret - an error should be raised", func(t *testing.T) {
+		secretData := map[string][]byte{
+			"opsmxIsdUrl": []byte("https://opsmx.secret.tst"),
+			"sourceName":  []byte("sourcename"),
+			"user":        []byte("admin"),
+		}
+		rpcPluginImp.kubeclientset = getFakeClient(secretData)
+		_, err := getOpsmxProfile(rpcPluginImp, opsmxMetric, "ns")
+		assert.Contains(t, err.Error(), "`cdIntegration` key not present in the secret file")
+	})
+
+	t.Run("sourceName is missing in the secret - an error should be raised", func(t *testing.T) {
+		secretData := map[string][]byte{
+			"cdIntegration": []byte("true"),
+			"opsmxIsdUrl":   []byte("https://opsmx.secret.tst"),
+			"user":          []byte("admin"),
+		}
+		rpcPluginImp.kubeclientset = getFakeClient(secretData)
+		_, err := getOpsmxProfile(rpcPluginImp, opsmxMetric, "ns")
+		assert.Contains(t, err.Error(), "`sourceName` key not present in the secret file")
+	})
+
+	t.Run("opsmxIsdUrl is missing in the secret - an error should be raised", func(t *testing.T) {
+		secretData := map[string][]byte{
+			"cdIntegration": []byte("true"),
+			"sourceName":    []byte("sourcename"),
+			"user":          []byte("admin"),
+		}
+		rpcPluginImp.kubeclientset = getFakeClient(secretData)
+		_, err := getOpsmxProfile(rpcPluginImp, opsmxMetric, "ns")
+		assert.Contains(t, err.Error(), "`opsmxIsdUrl` key not present in the secret file")
+	})
+
+	t.Run("opsmxIsdUrl is missing in the secret - an error should be raised", func(t *testing.T) {
+		secretData := map[string][]byte{
+			"cdIntegration": []byte("true"),
+			"sourceName":    []byte("sourcename"),
+			"user":          []byte("admin"),
+		}
+		rpcPluginImp.kubeclientset = getFakeClient(secretData)
+		_, err := getOpsmxProfile(rpcPluginImp, opsmxMetric, "ns")
+		assert.Contains(t, err.Error(), "`opsmxIsdUrl` key not present in the secret file")
+	})
+
+	t.Run("user is missing in the secret - an error should be raised", func(t *testing.T) {
+		secretData := map[string][]byte{
+			"cdIntegration": []byte("true"),
+			"opsmxIsdUrl":   []byte("https://opsmx.secret.tst"),
+		}
+		rpcPluginImp.kubeclientset = getFakeClient(secretData)
+		_, err := getOpsmxProfile(rpcPluginImp, opsmxMetric, "ns")
+		assert.Contains(t, err.Error(), "`user` key not present in the secret file")
+	})
+	t.Run("cdIntegration is neither true nor false in the secret - an error should be raised", func(t *testing.T) {
+		secretData := map[string][]byte{
+			"cdIntegration": []byte("test"),
+			"opsmxIsdUrl":   []byte("https://opsmx.secret.tst"),
+			"user":          []byte("admin"),
+			"sourceName":    []byte("sourcename"),
+		}
+		rpcPluginImp.kubeclientset = getFakeClient(secretData)
+		_, err := getOpsmxProfile(rpcPluginImp, opsmxMetric, "ns")
+		assert.Contains(t, err.Error(), "cdIntegration should be either true or false")
+	})
+
+	t.Run("basic flow - no error is raised", func(t *testing.T) {
+		secretData := map[string][]byte{
+			"cdIntegration": []byte("true"),
+			"opsmxIsdUrl":   []byte("https://opsmx.secret.tst"),
+			"user":          []byte("admin"),
+			"sourceName":    []byte("sourcename"),
+		}
+		rpcPluginImp.kubeclientset = getFakeClient(secretData)
+		_, err := getOpsmxProfile(rpcPluginImp, opsmxMetric, "ns")
+		assert.Nil(t, err)
+	})
+
+	t.Run("when user and url are also defined in the metric - values from the metric get picked up", func(t *testing.T) {
+		secretData := map[string][]byte{
+			"cdIntegration": []byte("true"),
+			"opsmxIsdUrl":   []byte("https://opsmx.secret.tst"),
+			"user":          []byte("admin"),
+			"sourceName":    []byte("sourcename"),
+		}
+		rpcPluginImp.kubeclientset = getFakeClient(secretData)
+
+		opsmxMetric := OPSMXMetric{Application: "newapp",
+			OpsmxIsdUrl:     "https://url.from.metric",
+			User:            "userFromMetric",
+			Profile:         "opsmx-profile-test",
+			LifetimeMinutes: 9,
+			Pass:            90,
+			Marginal:        85,
+			Services: []OPSMXService{{LogTemplateName: "logtemp",
+				LogScopeVariables: "pod_name",
+				CanaryLogScope:    "podHashCanary",
+				BaselineLogScope:  "podHashBaseline",
+			}},
+		}
+		opsmxProfileData, err := getOpsmxProfile(rpcPluginImp, opsmxMetric, "ns")
+		assert.Nil(t, err)
+		assert.Equal(t, "https://url.from.metric", opsmxProfileData.opsmxIsdUrl)
+		assert.Equal(t, "userFromMetric", opsmxProfileData.user)
+	})
+
+}
+
+func getFakeClient(data map[string][]byte) *k8sfake.Clientset {
+	opsmxSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: defaultSecretName,
+		},
+		Data: data,
+	}
+	fakeClient := k8sfake.NewSimpleClientset()
+	fakeClient.PrependReactor("get", "*", func(action kubetesting.Action) (handled bool, ret runtime.Object, err error) {
+		return true, opsmxSecret, nil
+	})
+	return fakeClient
 }

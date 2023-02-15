@@ -306,7 +306,6 @@ func getSecretData(g *RpcPlugin, metric OPSMXMetric, namespace string) (opsmxPro
 	}
 	secret.cdIntegration = string(secretcdintegration)
 
-	//TODO: Check
 	if secret.cdIntegration != "true" && secret.cdIntegration != "false" {
 		err := errors.New("opsmx profile secret validation error: cdIntegration should be either true or false")
 		return opsmxProfile{}, err

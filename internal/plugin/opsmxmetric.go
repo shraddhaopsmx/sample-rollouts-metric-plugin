@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -104,6 +105,9 @@ func (metric *OPSMXMetric) process(g *RpcPlugin, opsmxProfileData opsmxProfile, 
 	if err := metric.setBaselineStartTime(); err != nil {
 		return "", err
 	}
+	if err := metric.setEndTime(); err != nil {
+		return "", err
+	}
 	if err := metric.setIntervalTime(); err != nil {
 		return "", err
 	}
@@ -167,30 +171,37 @@ func (metric *OPSMXMetric) setBaselineStartTime() error {
 	return nil
 }
 
+func (metric *OPSMXMetric) setEndTime() error {
+	if metric.EndTime == "" {
+		return nil
+	}
+	tsEnd, err := time.Parse(time.RFC3339, metric.EndTime)
+	if err != nil {
+		return fmt.Errorf("error in parsing endTime: %v", err)
+	}
+	endTime := fmt.Sprintf("%d", tsEnd.UnixMilli())
+
+	metric.EndTime = endTime
+	return nil
+}
+
 // TODO: refactor
 func (metric *OPSMXMetric) setIntervalTime() error {
 	if metric.LifetimeMinutes == 0 {
-		tsEnd, err := time.Parse(time.RFC3339, metric.EndTime)
-		if err != nil {
-			return fmt.Errorf("provider config map validation error: Error in parsing endTime: %v", err)
-		}
 		if metric.CanaryStartTime != "" && metric.CanaryStartTime > metric.EndTime {
 			err := errors.New("provider config map validation error: canaryStartTime cannot be greater than endTime")
 			return err
 		}
-		tsStart := time.Now()
-		if metric.CanaryStartTime != "" {
-			tsStart, err = time.Parse(time.RFC3339, metric.CanaryStartTime)
-			if err != nil {
-				return err
-			}
-		}
-		tsDifference := tsEnd.Sub(tsStart)
-		min, err := time.ParseDuration(tsDifference.String())
+		tsStart, err := strconv.ParseInt(metric.CanaryStartTime, 10, 64)
 		if err != nil {
 			return err
 		}
-		metric.LifetimeMinutes = int(roundFloat(min.Minutes(), 0))
+		tsEnd, err := strconv.ParseInt(metric.EndTime, 10, 64)
+		if err != nil {
+			return err
+		}
+		tsDifference := time.UnixMilli(tsEnd).Sub(time.UnixMilli(tsStart))
+		metric.LifetimeMinutes = int(roundFloat(tsDifference.Minutes(), 0))
 	}
 	return nil
 }
@@ -266,6 +277,9 @@ func (metric *OPSMXMetric) processServices(g *RpcPlugin, opsmxProfileData opsmxP
 			}
 			servicesArray = append(servicesArray, serviceData)
 		}
+	}
+	if len(servicesArray) == 0 {
+		return []service{}, fmt.Errorf("at least one of log or metric context must be provided")
 	}
 	return servicesArray, nil
 }
@@ -371,8 +385,8 @@ func (metric *OPSMXMetric) validateLogs(item OPSMXService, serviceName string) (
 	if item.LogScopeVariables != "" {
 		isLog = true
 		//Check if no baseline or canary
-		if item.BaselineLogScope != "" && item.CanaryLogScope == "" {
-			err := fmt.Errorf("missing canary for log analysis of service '%s'", serviceName)
+		if item.BaselineLogScope == "" || item.CanaryLogScope == "" {
+			err := fmt.Errorf("missing canary/baseline for log analysis of service '%s'", serviceName)
 			return isLog, err
 		}
 		//Check if the number of placeholders provided dont match
@@ -399,7 +413,7 @@ func (metric *OPSMXMetric) validateMetrics(item OPSMXService, serviceName string
 		isMetric = true
 		//Check if no baseline or canary
 		if item.BaselineMetricScope == "" || item.CanaryMetricScope == "" {
-			err := fmt.Errorf("missing baseline/canary for metric analysis of service '%s'", serviceName)
+			err := fmt.Errorf("missing canary/baseline for metric analysis of service '%s'", serviceName)
 			return isMetric, err
 		}
 		//Check if the number of placeholders provided dont match
@@ -502,6 +516,7 @@ func getTemplateDataYaml(templateFileData []byte, template string, templateType 
 	return json.Marshal(metricStruct)
 }
 
+//TODO: Re add
 // func (metric *OPSMXMetric) checkISDUrl(c *RpcPlugin, opsmxIsdUrl string) error {
 // 	resp, err := c.client.Get(opsmxIsdUrl)
 // 	if err != nil && metric.OpsmxIsdUrl != "" && !strings.Contains(err.Error(), "timeout") {

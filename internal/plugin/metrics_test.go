@@ -27,14 +27,14 @@ func TestMetrics(t *testing.T) {
               group: Upstream Service Latency Per Ingress - 90th Percentile`
 
 		metricTemplate, err := processYamlMetrics([]byte(metricsData), "templateMetrics", "${namespace_key},${service},${ingress}")
-		assert.Equal(t, nil, err)
+		assert.Nil(t, err)
 		assert.Equal(t, "ADVANCED", metricTemplate.Data.Groups[0].Metrics[0].MetricType)
 		assert.Equal(t, float64(10), *metricTemplate.Data.Groups[0].Metrics[0].MetricWeight)
 		assert.Equal(t, "ReplaceWithZero", metricTemplate.Data.Groups[0].Metrics[0].NanStrategy)
 		assert.Equal(t, "HIGH", metricTemplate.Data.Groups[0].Metrics[0].Criticality)
 	})
 
-	t.Run("metric weight is not defined globally - local metricWeight should apply", func(t *testing.T) {
+	t.Run("metricWeight is not defined globally - local metricWeight should apply", func(t *testing.T) {
 		metricsData := `
         accountName: newacc
         nanStrategy: ReplaceWithZero
@@ -54,7 +54,7 @@ func TestMetrics(t *testing.T) {
               group: Upstream Service Latency Per Ingress - 90th Percentile`
 
 		metricTemplate, err := processYamlMetrics([]byte(metricsData), "templateMetrics", "${namespace_key},${service},${ingress}")
-		assert.Equal(t, nil, err)
+		assert.Nil(t, err)
 		assert.Equal(t, float64(22), *metricTemplate.Data.Groups[0].Metrics[0].MetricWeight)
 
 	})
@@ -79,7 +79,7 @@ func TestMetrics(t *testing.T) {
               group: Upstream Service Latency Per Ingress - 90th Percentile`
 
 		metricTemplate, err := processYamlMetrics([]byte(metricsData), "templateMetrics", "${namespace_key},${service},${ingress}")
-		assert.Equal(t, nil, err)
+		assert.Nil(t, err)
 		assert.Equal(t, "ReplaceWithZero", metricTemplate.Data.Groups[0].Metrics[0].NanStrategy)
 	})
 
@@ -103,7 +103,7 @@ func TestMetrics(t *testing.T) {
               group: Upstream Service Latency Per Ingress - 90th Percentile`
 
 		metricTemplate, err := processYamlMetrics([]byte(metricsData), "templateMetrics", "${namespace_key},${service},${ingress}")
-		assert.Equal(t, nil, err)
+		assert.Nil(t, err)
 		assert.Equal(t, "HIGH", metricTemplate.Data.Groups[0].Metrics[0].Criticality)
 	})
 
@@ -127,7 +127,7 @@ func TestMetrics(t *testing.T) {
               group: Upstream Service Latency Per Ingress - 90th Percentile`
 
 		metricTemplate, err := processYamlMetrics([]byte(metricsData), "templateMetrics", "${namespace_key},${service},${ingress}")
-		assert.Equal(t, nil, err)
+		assert.Nil(t, err)
 		assert.Equal(t, "ADVANCED", metricTemplate.Data.Groups[0].Metrics[0].MetricType)
 	})
 
@@ -166,11 +166,11 @@ func TestMetrics(t *testing.T) {
               group: Upstream Service Latency Per Ingress - 90th Percentile`
 
 		metricTemplate, err := processYamlMetrics([]byte(metricsData), "templateMetrics", "${namespace_key},${service},${ingress}")
-		assert.Equal(t, nil, err)
+		assert.Nil(t, err)
 		assert.Equal(t, "templateMetrics", metricTemplate.TemplateName)
 	})
 
-	t.Run("filterKey doesnt match the scopeVariables - filterKey should be overriden", func(t *testing.T) {
+	t.Run("filterKey doesnt match the scopeVariables - filterKey should be overriden by scopeVariables", func(t *testing.T) {
 		metricsData := `
         templateName: newTemplate
         accountName: newacc
@@ -191,9 +191,8 @@ func TestMetrics(t *testing.T) {
               group: Upstream Service Latency Per Ingress - 90th Percentile`
 
 		metricTemplate, err := processYamlMetrics([]byte(metricsData), "templateMetrics", "${namespace_key},${service},${ingress}")
-		assert.Equal(t, nil, err)
+		assert.Nil(t, err)
 		assert.Equal(t, "${namespace_key},${service},${ingress}", metricTemplate.FilterKey)
-
 	})
 
 }
