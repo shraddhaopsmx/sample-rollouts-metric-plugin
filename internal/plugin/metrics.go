@@ -108,7 +108,7 @@ func (m *MetricISDTemplate) setFilterKey(templateName string, metricScopeVariabl
 func (m *MetricISDTemplate) setCriticality(templateName string) {
 	//criticality
 	if m.Criticality == "" {
-		log.Infof("the criticaility field is not defined at the global level for metric template %s, values at the metric level will be used", templateName)
+		log.Infof("the criticality field is not defined at the global level for metric template %s, values at the metric level will be used", templateName)
 		return
 	}
 	for _, metric := range m.Data.Groups {
