@@ -432,7 +432,8 @@ func (metric *OPSMXMetric) validateMetrics(item OPSMXService, serviceName string
 func generateTemplateGitops(c *RpcPlugin, secret opsmxProfile, templateName string, templateType string, scopeVars string, nameSpace string) (string, error) {
 	v1ConfigMap, err := c.kubeclientset.CoreV1().ConfigMaps(nameSpace).Get(context.TODO(), templateName, metav1.GetOptions{})
 	if err != nil {
-		return "", fmt.Errorf("gitops '%s' template config map validation error: %v\n Action Required: Template must carry data element '%s'", templateName, err, templateName)
+		//TODO: change error
+		return "", fmt.Errorf("gitops '%s' template config map validation error: %v", templateName, err)
 	}
 	templateDataCM, ok := v1ConfigMap.Data[templateName]
 	if !ok {
@@ -440,7 +441,7 @@ func generateTemplateGitops(c *RpcPlugin, secret opsmxProfile, templateName stri
 	}
 
 	templateFileData := []byte(templateDataCM)
-	if !isJSON(templateDataCM) {
+	if !json.Valid(templateFileData) {
 		templateFileData, err = getTemplateDataYaml(templateFileData, templateName, templateType, scopeVars)
 		if err != nil {
 			return "", err
@@ -515,20 +516,3 @@ func getTemplateDataYaml(templateFileData []byte, template string, templateType 
 	}
 	return json.Marshal(metricStruct)
 }
-
-//TODO: Re add
-// func (metric *OPSMXMetric) checkISDUrl(c *RpcPlugin, opsmxIsdUrl string) error {
-// 	resp, err := c.client.Get(opsmxIsdUrl)
-// 	if err != nil && metric.OpsmxIsdUrl != "" && !strings.Contains(err.Error(), "timeout") {
-// 		errorMsg := fmt.Sprintf("provider config map validation error: incorrect opsmxIsdUrl: %v", opsmxIsdUrl)
-// 		return errors.New(errorMsg)
-// 	} else if err != nil && metric.OpsmxIsdUrl == "" && !strings.Contains(err.Error(), "timeout") {
-// 		errorMsg := fmt.Sprintf("opsmx profile secret validation error: incorrect opsmxIsdUrl: %v", opsmxIsdUrl)
-// 		return errors.New(errorMsg)
-// 	} else if err != nil {
-// 		return errors.New(err.Error())
-// 	} else if resp.StatusCode != 200 {
-// 		return errors.New(resp.Status)
-// 	}
-// 	return nil
-// }

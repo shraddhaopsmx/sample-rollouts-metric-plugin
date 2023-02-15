@@ -1,18 +1,22 @@
 package plugin
 
 import (
+	"bytes"
+	"io/ioutil"
 	"net/http"
 	"testing"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	kubetesting "k8s.io/client-go/testing"
 )
 
 func TestOpsmxMetricValidations(t *testing.T) {
-
 	logCtx := *log.WithFields(log.Fields{"plugin-test": "opsmx"})
-
 	rpcPluginImp := &RpcPlugin{
 		LogCtx:        logCtx,
 		kubeclientset: k8sfake.NewSimpleClientset(),
@@ -425,20 +429,209 @@ func TestOpsmxMetricValidations(t *testing.T) {
 		_, err := opsmxMetric.process(rpcPluginImp, opsmxProfileData, "ns")
 		assert.Contains(t, err.Error(), "missing metric Scope placeholder")
 	})
-	t.Run("intervalTime cannot be less than 3 minutes - an error should be raised", func(t *testing.T) {
+
+}
+
+func TestOpsmxMetricVariousFlows(t *testing.T) {
+	logCtx := *log.WithFields(log.Fields{"plugin-test": "opsmx"})
+	rpcPluginImp := &RpcPlugin{
+		LogCtx:        logCtx,
+		kubeclientset: k8sfake.NewSimpleClientset(),
+		client:        NewHttpClient(),
+	}
+	opsmxProfileData := opsmxProfile{cdIntegration: "true",
+		user:        "admin",
+		sourceName:  "sourceName",
+		opsmxIsdUrl: "https://opsmx.test.tst"}
+
+	t.Run("basic no gitops- no error should be raised", func(t *testing.T) {
 		opsmxMetric := OPSMXMetric{Application: "newapp",
 			LifetimeMinutes: 9,
 			Pass:            90,
 			Marginal:        85,
-			Services: []OPSMXService{{LogTemplateName: "logtemp",
+			Services: []OPSMXService{{
+				LogTemplateName:      "logtemp",
+				LogScopeVariables:    "pod_name",
+				CanaryLogScope:       "podHashCanary",
+				BaselineLogScope:     "podHashBaseline",
+				MetricScopeVariables: "pod_name",
+				BaselineMetricScope:  "podHashBaseline",
+				CanaryMetricScope:    "podHashCanary",
+				MetricTemplateName:   "metrictemplate",
+			}},
+		}
+		_, err := opsmxMetric.process(rpcPluginImp, opsmxProfileData, "ns")
+		assert.Nil(t, err)
+	})
+
+	t.Run("basic flow with template versions- no error should be raised", func(t *testing.T) {
+		opsmxMetric := OPSMXMetric{
+			Application:     "newapp",
+			LifetimeMinutes: 9,
+			Pass:            90,
+			Marginal:        85,
+			Services: []OPSMXService{{
+				LogTemplateName:       "logtemp",
+				LogScopeVariables:     "pod_name",
+				CanaryLogScope:        "podHashCanary",
+				BaselineLogScope:      "podHashBaseline",
+				LogTemplateVersion:    "v1.0",
+				MetricScopeVariables:  "pod_name",
+				BaselineMetricScope:   "podHashBaseline",
+				CanaryMetricScope:     "podHashCanary",
+				MetricTemplateName:    "metrictemplate",
+				MetricTemplateVersion: "v1.0",
+			}},
+		}
+		_, err := opsmxMetric.process(rpcPluginImp, opsmxProfileData, "ns")
+		assert.Nil(t, err)
+	})
+
+	t.Run("gitops flow for the template, configmap not present- configmap not found error", func(t *testing.T) {
+		opsmxMetric := OPSMXMetric{
+			Application:     "newapp",
+			LifetimeMinutes: 9,
+			Pass:            90,
+			Marginal:        85,
+			GitOPS:          true,
+			Services: []OPSMXService{{
+				LogTemplateName:   "logtemp",
 				LogScopeVariables: "pod_name",
 				CanaryLogScope:    "podHashCanary",
 				BaselineLogScope:  "podHashBaseline",
 			}},
 		}
-		_, _ = opsmxMetric.process(rpcPluginImp, opsmxProfileData, "ns")
-		// assert.Equal(t, "intervalTime should be given along with lookBackType to perform interval analysis", err.Error())
+		_, err := opsmxMetric.process(rpcPluginImp, opsmxProfileData, "ns")
+		assert.Contains(t, err.Error(), "template config map validation error")
 	})
+
+	t.Run("gitops flow for the template", func(t *testing.T) {
+		opsmxMetric := OPSMXMetric{
+			Application:     "newapp",
+			LifetimeMinutes: 9,
+			Pass:            90,
+			Marginal:        85,
+			GitOPS:          true,
+			Services: []OPSMXService{{
+				MetricScopeVariables: "pod_name",
+				BaselineMetricScope:  "podHashBaseline",
+				CanaryMetricScope:    "podHashCanary",
+				MetricTemplateName:   "metrictemplate",
+			}},
+		}
+		c := NewTestClient(func(req *http.Request) (*http.Response, error) {
+			assert.Equal(t, "https://opsmx.test.tst/autopilot/api/v5/external/template?sha1=a5b311c084cebce5b2e40b388e2e11c6e397c970&templateName=metrictemplate&templateType=METRIC", req.URL.String())
+			return &http.Response{
+				StatusCode: 200,
+				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				true
+				`)),
+				Header: make(http.Header),
+			}, nil
+		})
+
+		metricsData := `
+        accountName: newacc
+        metricWeight: 1
+        nanStrategy: ReplaceWithZero
+        criticality: LOW
+        metricTemplateSetup:
+          percentDiffThreshold: hard
+          isNormalize: false
+          groups:
+            - metrics:
+                - riskDirection: Lower
+                  name: >-
+                    avg(rate(nginx_ingress_controller_ingress_upstream_latency_seconds{namespace="${namespace_key}",
+                    service= "${service}",ingress = "${ingress}", quantile ="0.9"}[5m]))
+                  watchlist: false
+                  metricType: ADVANCED
+              group: Upstream Service Latency Per Ingress - 90th Percentile`
+
+		cmMetric := map[string]string{"metrictemplate": metricsData}
+
+		rpcPluginImp.kubeclientset = getFakeClientForCM(cmMetric)
+		rpcPluginImp.client = c
+		_, err := opsmxMetric.process(rpcPluginImp, opsmxProfileData, "ns")
+		assert.Nil(t, err)
+	})
+
+	t.Run("gitops flow for the template", func(t *testing.T) {
+		opsmxMetric := OPSMXMetric{
+			Application:     "newapp",
+			LifetimeMinutes: 9,
+			Pass:            90,
+			Marginal:        85,
+			GitOPS:          true,
+			Services: []OPSMXService{{
+				MetricScopeVariables: "pod_name",
+				BaselineMetricScope:  "podHashBaseline",
+				CanaryMetricScope:    "podHashCanary",
+				MetricTemplateName:   "metrictemplate",
+			}},
+		}
+		c := NewTestClient(func(req *http.Request) (*http.Response, error) {
+			assert.Equal(t, "https://opsmx.test.tst/autopilot/api/v5/external/template?sha1=a5b311c084cebce5b2e40b388e2e11c6e397c970&templateName=metrictemplate&templateType=METRIC", req.URL.String())
+			if req.Method == "GET" {
+				return &http.Response{
+					StatusCode: 200,
+					Body: ioutil.NopCloser(bytes.NewBufferString(`
+				false
+				`)),
+					Header: make(http.Header),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: 200,
+				Body: ioutil.NopCloser(bytes.NewBufferString(`
+			{
+				"status" :"CREATED"
+			}
+			`)),
+				Header: make(http.Header),
+			}, nil
+
+		})
+
+		metricsData := `
+        accountName: newacc
+        metricWeight: 1
+        nanStrategy: ReplaceWithZero
+        criticality: LOW
+        metricTemplateSetup:
+          percentDiffThreshold: hard
+          isNormalize: false
+          groups:
+            - metrics:
+                - riskDirection: Lower
+                  name: >-
+                    avg(rate(nginx_ingress_controller_ingress_upstream_latency_seconds{namespace="${namespace_key}",
+                    service= "${service}",ingress = "${ingress}", quantile ="0.9"}[5m]))
+                  watchlist: false
+                  metricType: ADVANCED
+              group: Upstream Service Latency Per Ingress - 90th Percentile`
+
+		cmMetric := map[string]string{"metrictemplate": metricsData}
+
+		rpcPluginImp.kubeclientset = getFakeClientForCM(cmMetric)
+		rpcPluginImp.client = c
+		_, err := opsmxMetric.process(rpcPluginImp, opsmxProfileData, "ns")
+		assert.Nil(t, err)
+	})
+}
+
+func getFakeClientForCM(data map[string]string) *k8sfake.Clientset {
+	opsmxSecret := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: defaultSecretName,
+		},
+		Data: data,
+	}
+	fakeClient := k8sfake.NewSimpleClientset()
+	fakeClient.PrependReactor("get", "*", func(action kubetesting.Action) (handled bool, ret runtime.Object, err error) {
+		return true, opsmxSecret, nil
+	})
+	return fakeClient
 }
 
 // RoundTripFunc .

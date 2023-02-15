@@ -81,7 +81,7 @@ func (g *RpcPlugin) Run(analysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metri
 	if err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, err)
 	}
-	if !isUrl(opsmxProfileData.opsmxIsdUrl) {
+	if err := checkISDUrl(g, opsmxProfileData.opsmxIsdUrl); err != nil {
 		return metricutil.MarkMeasurementError(newMeasurement, fmt.Errorf("error in processing url %s", opsmxProfileData.opsmxIsdUrl))
 	}
 	payload, err := OPSMXMetric.process(g, opsmxProfileData, analysisRun.Namespace)
@@ -331,4 +331,20 @@ func getOpsmxProfile(g *RpcPlugin, metric OPSMXMetric, namespace string) (opsmxP
 	}
 	s.cdIntegration = cdIntegration
 	return s, nil
+}
+
+func checkISDUrl(c *RpcPlugin, opsmxIsdUrl string) error {
+	resp, err := c.client.Get(opsmxIsdUrl)
+	if err != nil && opsmxIsdUrl != "" && !strings.Contains(err.Error(), "timeout") {
+		errorMsg := fmt.Sprintf("provider config map validation error: incorrect opsmxIsdUrl: %v", opsmxIsdUrl)
+		return errors.New(errorMsg)
+	} else if err != nil && opsmxIsdUrl == "" && !strings.Contains(err.Error(), "timeout") {
+		errorMsg := fmt.Sprintf("opsmx profile secret validation error: incorrect opsmxIsdUrl: %v", opsmxIsdUrl)
+		return errors.New(errorMsg)
+	} else if err != nil {
+		return errors.New(err.Error())
+	} else if resp.StatusCode != 200 {
+		return errors.New(resp.Status)
+	}
+	return nil
 }

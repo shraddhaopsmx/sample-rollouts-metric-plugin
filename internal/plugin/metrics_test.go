@@ -126,7 +126,7 @@ func TestMetrics(t *testing.T) {
                   metricType: ADVANCED
               group: Upstream Service Latency Per Ingress - 90th Percentile`
 
-		metricTemplate, err := processYamlMetrics([]byte(metricsData), "templateMetrics", "${namespace_key},${service},${ingress}")
+		metricTemplate, err := processYamlMetrics([]byte(metricsData), "templateMetric", "${namespace_key},${service},${ingress}")
 		assert.Nil(t, err)
 		assert.Equal(t, "ADVANCED", metricTemplate.Data.Groups[0].Metrics[0].MetricType)
 	})
