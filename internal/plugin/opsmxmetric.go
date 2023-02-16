@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -437,9 +438,8 @@ func generateTemplateGitops(c *RpcPlugin, secret opsmxProfile, templateName stri
 	}
 	templateDataCM, ok := v1ConfigMap.Data[templateName]
 	if !ok {
-		return "", errors.New("something went wrong")
+		return "", fmt.Errorf("gitops '%s' template config map validation error: missing data element %s", templateName, templateName)
 	}
-
 	templateFileData := []byte(templateDataCM)
 	if !json.Valid(templateFileData) {
 		templateFileData, err = getTemplateDataYaml(templateFileData, templateName, templateType, scopeVars)
@@ -458,6 +458,7 @@ func generateTemplateGitops(c *RpcPlugin, secret opsmxProfile, templateName stri
 		}
 	}
 
+	log.Info(string(templateFileData))
 	sha1Code := generateSHA1(string(templateFileData))
 	templateUrl, err := getTemplateUrl(secret.opsmxIsdUrl, sha1Code, templateType, templateName)
 	if err != nil {

@@ -1,8 +1,11 @@
 package plugin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io/ioutil"
+	"net/http"
 	"testing"
 	"time"
 
@@ -109,6 +112,222 @@ func TestRunSuccessfully(t *testing.T) {
 	// Canceling should cause an exit
 	cancel()
 	<-closeCh
+}
+
+func TestRun(t *testing.T) {
+	t.Run("basic flow for Run - no error is raised", func(t *testing.T) {
+		logCtx := *log.WithFields(log.Fields{"plugin-test": "opsmx"})
+		rpcPluginImp := &RpcPlugin{
+			LogCtx: logCtx,
+		}
+
+		secretData := map[string][]byte{
+			"cdIntegration": []byte("true"),
+			"opsmxIsdUrl":   []byte("https://opsmx.secret.tst"),
+			"user":          []byte("admin"),
+			"sourceName":    []byte("sourcename"),
+		}
+		rpcPluginImp.kubeclientset = getFakeClient(secretData)
+
+		c := NewTestClient(func(req *http.Request) (*http.Response, error) {
+			if req.Method == "GET" {
+				return &http.Response{
+					StatusCode: 200,
+					Header:     make(http.Header),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: 200,
+				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				{
+					"canaryId": 53
+				}
+			`)),
+				Header: make(http.Header),
+			}, nil
+
+		})
+		rpcPluginImp.client = c
+
+		metric := v1alpha1.Metric{
+			Name: "testapp",
+			Provider: v1alpha1.MetricProvider{
+				Plugin: map[string]json.RawMessage{"opsmx": json.RawMessage([]byte(`{"application":"newapp","lifetimeMinutes":9,"passScore":90,"marginalScore":85,"serviceList":[{"logTemplateName":"logtemp","logScopeVariables":"pod_name","baselineLogScope":"podHashBaseline","canaryLogScope":"podHashCanary"}]}`))}},
+		}
+
+		measurement := rpcPluginImp.Run(newAnalysisRun(), metric)
+		assert.NotNil(t, measurement.StartedAt)
+		assert.Nil(t, measurement.FinishedAt)
+		assert.Equal(t, "53", measurement.Metadata["canaryId"])
+		assert.Equal(t, v1alpha1.AnalysisPhaseRunning, measurement.Phase)
+	})
+}
+
+func TestResume(t *testing.T) {
+
+	logCtx := *log.WithFields(log.Fields{"plugin-test": "opsmx"})
+	rpcPluginImp := &RpcPlugin{
+		LogCtx: logCtx,
+	}
+	secretData := map[string][]byte{
+		"cdIntegration": []byte("true"),
+		"opsmxIsdUrl":   []byte("https://opsmx.secret.tst"),
+		"user":          []byte("admin"),
+		"sourceName":    []byte("sourcename"),
+	}
+	rpcPluginImp.kubeclientset = getFakeClient(secretData)
+
+	metric := v1alpha1.Metric{
+		Name: "testapp",
+		Provider: v1alpha1.MetricProvider{
+			Plugin: map[string]json.RawMessage{"opsmx": json.RawMessage([]byte(`{"application":"newapp","lifetimeMinutes":9,"passScore":90,"marginalScore":85,"serviceList":[{"logTemplateName":"logtemp","logScopeVariables":"pod_name","baselineLogScope":"podHashBaseline","canaryLogScope":"podHashCanary"}]}`))}},
+	}
+
+	mapMetadata := make(map[string]string)
+	mapMetadata["canaryId"] = "53"
+	measurement := v1alpha1.Measurement{
+		Metadata: mapMetadata,
+		Phase:    v1alpha1.AnalysisPhaseRunning,
+	}
+
+	t.Run("basic flow for Resume with the status as running - no error is raised", func(t *testing.T) {
+		c := NewTestClient(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: 200,
+				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				{
+					"owner": "admin",
+					"application": "test-plugin",
+					"canaryResult": {
+						"duration": "9 seconds",
+						"lastUpdated": "2023-02-16 08:53:33.182",
+						"canaryReportURL": "https://opsmx.secret.tst/ui/application/deploymentverification/newapp/53"
+					},
+					"launchedDate": "2023-02-16 08:53:23.439",
+					"canaryConfig": {
+						"combinedCanaryResultStrategy": "LOWEST",
+						"minimumCanaryResultScore": 0.0,
+						"name": "admin",
+						"lifetimeMinutes": 3,
+						"canaryAnalysisIntervalMins": 3,
+						"maximumCanaryResultScore": 90.0
+					},
+					"id": "53",
+					"status": {
+						"complete": false,
+						"status": "RUNNING"
+					}
+				}
+				`)),
+				Header: make(http.Header),
+			}, nil
+		})
+		rpcPluginImp.client = c
+
+		measurement = rpcPluginImp.Resume(newAnalysisRun(), metric, measurement)
+		assert.Nil(t, measurement.FinishedAt)
+		assert.Equal(t, "53", measurement.Metadata["canaryId"])
+		assert.Equal(t, "https://opsmx.secret.tst/ui/application/deploymentverification/newapp/53", measurement.Metadata["reportUrl"])
+		assert.Equal(t, v1alpha1.AnalysisPhaseRunning, measurement.Phase)
+	})
+	t.Run("basic flow for Resume with the status as inconclusive - no error is raised", func(t *testing.T) {
+		c := NewTestClient(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: 200,
+				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				{
+					"owner": "admin",
+					"application": "newapp",
+					"canaryResult": {
+						"canaryReportURL": "https://opsmx.secret.tst/ui/application/deploymentverification/newapp/53",
+						"overallScore": 85,
+						"overallResult": "HEALTHY",
+						"message": "Canary Is HEALTHY",
+						"errors": []
+					},
+					"id": "53",
+					"status": {
+						"complete": true,
+						"status": "COMPLETED"
+					}}
+				`)),
+				Header: make(http.Header),
+			}, nil
+		})
+		rpcPluginImp.client = c
+
+		measurement = rpcPluginImp.Resume(newAnalysisRun(), metric, measurement)
+		assert.NotNil(t, measurement.FinishedAt)
+		assert.Equal(t, "53", measurement.Metadata["canaryId"])
+		assert.Equal(t, "https://opsmx.secret.tst/ui/application/deploymentverification/newapp/53", measurement.Metadata["reportUrl"])
+		assert.Equal(t, v1alpha1.AnalysisPhaseInconclusive, measurement.Phase)
+	})
+
+	t.Run("basic flow for Resume with the status as cancelled - no error is raised", func(t *testing.T) {
+		c := NewTestClient(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: 200,
+				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				{
+					"owner": "admin",
+					"application": "newapp",
+					"canaryResult": {
+						"canaryReportURL": "https://opsmx.secret.tst/ui/application/deploymentverification/newapp/53",
+						"overallScore": 85,
+						"overallResult": "HEALTHY",
+						"message": "Canary Is HEALTHY",
+						"errors": []
+					},
+					"id": "53",
+					"status": {
+						"complete": false,
+						"status": "CANCELLED"
+					}}
+				`)),
+				Header: make(http.Header),
+			}, nil
+		})
+		rpcPluginImp.client = c
+
+		measurement = rpcPluginImp.Resume(newAnalysisRun(), metric, measurement)
+		assert.NotNil(t, measurement.FinishedAt)
+		assert.Equal(t, "53", measurement.Metadata["canaryId"])
+		assert.Equal(t, "https://opsmx.secret.tst/ui/application/deploymentverification/newapp/53", measurement.Metadata["reportUrl"])
+		assert.Equal(t, v1alpha1.AnalysisPhaseFailed, measurement.Phase)
+	})
+
+	t.Run("basic flow for Resume with the status as failed - no error is raised", func(t *testing.T) {
+		c := NewTestClient(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: 200,
+				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				{
+					"owner": "admin",
+					"application": "newapp",
+					"canaryResult": {
+						"canaryReportURL": "https://opsmx.secret.tst/ui/application/deploymentverification/newapp/53",
+						"overallScore": 0,
+						"overallResult": "HEALTHY",
+						"message": "Canary Is HEALTHY",
+						"errors": []
+					},
+					"id": "53",
+					"status": {
+						"complete": true,
+						"status": "COMPLETED"
+					}}
+				`)),
+				Header: make(http.Header),
+			}, nil
+		})
+		rpcPluginImp.client = c
+
+		measurement = rpcPluginImp.Resume(newAnalysisRun(), metric, measurement)
+		assert.NotNil(t, measurement.FinishedAt)
+		assert.Equal(t, "53", measurement.Metadata["canaryId"])
+		assert.Equal(t, "https://opsmx.secret.tst/ui/application/deploymentverification/newapp/53", measurement.Metadata["reportUrl"])
+		assert.Equal(t, v1alpha1.AnalysisPhaseFailed, measurement.Phase)
+	})
 }
 
 func TestOpsmxProfile(t *testing.T) {
@@ -250,4 +469,8 @@ func getFakeClient(data map[string][]byte) *k8sfake.Clientset {
 		return true, opsmxSecret, nil
 	})
 	return fakeClient
+}
+
+func newAnalysisRun() *v1alpha1.AnalysisRun {
+	return &v1alpha1.AnalysisRun{}
 }

@@ -446,9 +446,11 @@ func TestOpsmxMetricVariousFlows(t *testing.T) {
 
 	t.Run("basic no gitops- no error should be raised", func(t *testing.T) {
 		opsmxMetric := OPSMXMetric{Application: "newapp",
-			LifetimeMinutes: 9,
-			Pass:            90,
-			Marginal:        85,
+			BaselineStartTime: "2022-08-02T13:15:00Z",
+			CanaryStartTime:   "2022-08-02T13:15:00Z",
+			EndTime:           "2022-08-02T13:45:10Z",
+			Pass:              90,
+			Marginal:          85,
 			Services: []OPSMXService{{
 				LogTemplateName:      "logtemp",
 				LogScopeVariables:    "pod_name",
@@ -618,6 +620,161 @@ func TestOpsmxMetricVariousFlows(t *testing.T) {
 		_, err := opsmxMetric.process(rpcPluginImp, opsmxProfileData, "ns")
 		assert.Nil(t, err)
 	})
+
+	t.Run("gitops flow for the template", func(t *testing.T) {
+		opsmxMetric := OPSMXMetric{
+			Application:     "newapp",
+			LifetimeMinutes: 9,
+			Pass:            90,
+			Marginal:        85,
+			GitOPS:          true,
+			Services: []OPSMXService{{
+				MetricScopeVariables: "pod_name",
+				BaselineMetricScope:  "podHashBaseline",
+				CanaryMetricScope:    "podHashCanary",
+				MetricTemplateName:   "metrictemplate",
+			}},
+		}
+		c := NewTestClient(func(req *http.Request) (*http.Response, error) {
+			assert.Equal(t, "https://opsmx.test.tst/autopilot/api/v5/external/template?sha1=25abf0ad2b677193a4d1946a8110b3dd3ee99a72&templateName=metrictemplate&templateType=METRIC", req.URL.String())
+			if req.Method == "GET" {
+				return &http.Response{
+					StatusCode: 200,
+					Body: ioutil.NopCloser(bytes.NewBufferString(`
+				false
+				`)),
+					Header: make(http.Header),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: 200,
+				Body: ioutil.NopCloser(bytes.NewBufferString(`
+			{
+				"status" :"CREATED"
+			}
+			`)),
+				Header: make(http.Header),
+			}, nil
+
+		})
+
+		metricsData := `
+		{"filterKey":"pod_name","accountName":"newacc","data":{"isNormalize":false,"groups":[{"metrics":[{"metricType":"ADVANCED","metricWeight":1,"nanStrategy":"ReplaceWithZero","riskDirection":"Lower","name":"avg(rate(nginx_ingress_controller_ingress_upstream_latency_seconds{namespace=\"${namespace_key}\", service= \"${service}\",ingress = \"${ingress}\", quantile =\"0.9\"}[5m]))","criticality":"LOW","watchlist":false}],"group":"Upstream Service Latency Per Ingress - 90th Percentile"}]},"templateName":"template"}`
+
+		cmMetric := map[string]string{"metrictemplate": metricsData}
+
+		rpcPluginImp.kubeclientset = getFakeClientForCM(cmMetric)
+		rpcPluginImp.client = c
+		_, err := opsmxMetric.process(rpcPluginImp, opsmxProfileData, "ns")
+		assert.NotNil(t, err)
+	})
+
+	t.Run("gitops flow for the template", func(t *testing.T) {
+		opsmxMetric := OPSMXMetric{
+			Application:     "newapp",
+			LifetimeMinutes: 9,
+			Pass:            90,
+			Marginal:        85,
+			GitOPS:          true,
+			Services: []OPSMXService{{
+				LogScopeVariables: "pod_name",
+				BaselineLogScope:  "podHashBaseline",
+				CanaryLogScope:    "podHashCanary",
+				LogTemplateName:   "logtemplate",
+			}},
+		}
+
+		logData := `
+		{"filterKey":"${namespace_key}","tagEnabled":true,"monitoringProvider":"ELASTICSEARCH","accountName":"ds-elastic","scoringAlgorithm":"Canary","index":"kubernetes*","responseKeywords":"log,message","tags":[{"string":"NonOutOfMemoryError","tag":"tag1"}],"errorTopics":[]}`
+
+		cmMetric := map[string]string{"template": logData}
+
+		rpcPluginImp.kubeclientset = getFakeClientForCM(cmMetric)
+		_, err := opsmxMetric.process(rpcPluginImp, opsmxProfileData, "ns")
+		assert.NotNil(t, err)
+	})
+
+	t.Run("gitops flow for the template", func(t *testing.T) {
+		opsmxMetric := OPSMXMetric{
+			Application:     "newapp",
+			LifetimeMinutes: 9,
+			Pass:            90,
+			Marginal:        85,
+			GitOPS:          true,
+			Services: []OPSMXService{{
+				LogScopeVariables: "pod_name",
+				BaselineLogScope:  "podHashBaseline",
+				CanaryLogScope:    "podHashCanary",
+				LogTemplateName:   "logtemplate",
+			}},
+		}
+
+		logData := `
+		{"filterKey":"${namespace_key}","tagEnabled":true,"monitoringProvider":"ELASTICSEARCH","accountName":"ds-elastic","scoringAlgorithm":"Canary","index":"kubernetes*","responseKeywords":"log,message","tags":[{"string":"NonOutOfMemoryError","tag":"tag1"}],"errorTopics":[]}`
+
+		cmMetric := map[string]string{"logtemplate": logData}
+
+		rpcPluginImp.kubeclientset = getFakeClientForCM(cmMetric)
+		_, err := opsmxMetric.process(rpcPluginImp, opsmxProfileData, "ns")
+		assert.NotNil(t, err)
+	})
+
+	t.Run("gitops flow for the template", func(t *testing.T) {
+		opsmxMetric := OPSMXMetric{
+			Application:     "newapp",
+			LifetimeMinutes: 9,
+			Pass:            90,
+			Marginal:        85,
+			GitOPS:          true,
+			Services: []OPSMXService{{
+				LogScopeVariables: "pod_name",
+				BaselineLogScope:  "podHashBaseline",
+				CanaryLogScope:    "podHashCanary",
+				LogTemplateName:   "logtemplate",
+			}},
+		}
+
+		c := NewTestClient(func(req *http.Request) (*http.Response, error) {
+			assert.Equal(t, "https://opsmx.test.tst/autopilot/api/v5/external/template?sha1=fb14b5dbf9c619c54ad001fcc757e6f2aae19503&templateName=logtemplate&templateType=LOG", req.URL.String())
+			if req.Method == "GET" {
+				return &http.Response{
+					StatusCode: 200,
+					Body: ioutil.NopCloser(bytes.NewBufferString(`
+				false
+				`)),
+					Header: make(http.Header),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: 200,
+				Body: ioutil.NopCloser(bytes.NewBufferString(`
+			{
+				"status" :"CREATED"
+			}
+			`)),
+				Header: make(http.Header),
+			}, nil
+
+		})
+
+		logData := `
+        monitoringProvider: ELASTICSEARCH
+        accountName: ds-elastic
+        scoringAlgorithm: Canary
+        index: kubernetes*
+        responseKeywords: log,message
+        disableDefaultErrorTopics: true
+        tags:
+        - errorString: NonOutOfMemoryError
+          tag: tag1`
+
+		cmMetric := map[string]string{"logtemplate": logData}
+		rpcPluginImp.client = c
+		rpcPluginImp.kubeclientset = getFakeClientForCM(cmMetric)
+		_, err := opsmxMetric.process(rpcPluginImp, opsmxProfileData, "ns")
+		assert.Nil(t, err)
+	})
+
 }
 
 func getFakeClientForCM(data map[string]string) *k8sfake.Clientset {

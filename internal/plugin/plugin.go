@@ -190,36 +190,25 @@ func (g *RpcPlugin) Resume(analysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Me
 	if err != nil {
 		return metricutil.MarkMeasurementError(measurement, err)
 	}
-	var status map[string]interface{}
-	var reportUrlJson map[string]interface{}
+	scoreResponseMap, err := processScoreResponse(data)
+	if err != nil {
+		return metricutil.MarkMeasurementError(measurement, err)
+	}
 
-	err = json.Unmarshal(data, &status)
-	if err != nil {
-		err := fmt.Errorf("analysis Error: Error in post processing canary Response: %v", err)
-		return metricutil.MarkMeasurementError(measurement, err)
-	}
-	jsonBytes, err := json.MarshalIndent(status["canaryResult"], "", "   ")
-	if err != nil {
-		return metricutil.MarkMeasurementError(measurement, err)
-	}
-	err = json.Unmarshal(jsonBytes, &reportUrlJson)
-	if err != nil {
-		return metricutil.MarkMeasurementError(measurement, err)
-	}
-	measurement.Metadata["reportUrl"] = fmt.Sprintf("%s", reportUrlJson["canaryReportURL"])
+	measurement.Metadata["reportUrl"] = fmt.Sprintf("%s", scoreResponseMap["canaryReportURL"])
 
 	if OPSMXMetric.LookBackType != "" {
-		measurement.Metadata["Current intervalNo"] = fmt.Sprintf("%v", reportUrlJson["intervalNo"])
+		measurement.Metadata["Current intervalNo"] = fmt.Sprintf("%v", scoreResponseMap["intervalNo"])
 	}
 	//if the status is Running, resume analysis after delay
-	if status["status"] == "RUNNING" {
+	if scoreResponseMap["status"] == "RUNNING" {
 		resumeTime := metav1.NewTime(timeutil.Now().Add(resumeAfter))
 		measurement.ResumeAt = &resumeTime
 		measurement.Phase = v1alpha1.AnalysisPhaseRunning
 		return measurement
 	}
 	//if run is cancelled mid-run
-	if status["status"] == "CANCELLED" {
+	if scoreResponseMap["status"] == "CANCELLED" {
 		measurement.Phase = v1alpha1.AnalysisPhaseFailed
 		measurement.Message = "Analysis Cancelled"
 	} else {
@@ -337,9 +326,6 @@ func checkISDUrl(c *RpcPlugin, opsmxIsdUrl string) error {
 	resp, err := c.client.Get(opsmxIsdUrl)
 	if err != nil && opsmxIsdUrl != "" && !strings.Contains(err.Error(), "timeout") {
 		errorMsg := fmt.Sprintf("provider config map validation error: incorrect opsmxIsdUrl: %v", opsmxIsdUrl)
-		return errors.New(errorMsg)
-	} else if err != nil && opsmxIsdUrl == "" && !strings.Contains(err.Error(), "timeout") {
-		errorMsg := fmt.Sprintf("opsmx profile secret validation error: incorrect opsmxIsdUrl: %v", opsmxIsdUrl)
 		return errors.New(errorMsg)
 	} else if err != nil {
 		return errors.New(err.Error())

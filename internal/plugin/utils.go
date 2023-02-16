@@ -4,13 +4,12 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"net/url"
 	"strings"
-
-	log "github.com/sirupsen/logrus"
 )
 
 func roundFloat(val float64, precision uint) float64 {
@@ -63,28 +62,11 @@ func serviceExists(list []service, serviceName string) bool {
 	return false
 }
 
-func isJSON(s string) bool {
-	var j map[string]interface{}
-	if err := json.Unmarshal([]byte(s), &j); err != nil {
-		return false
-	}
-	return true
-}
-
 func generateSHA1(s string) string {
 	h := sha1.New()
 	h.Write([]byte(s))
 	sha1_hash := hex.EncodeToString(h.Sum(nil))
 	return sha1_hash
-}
-
-func isUrl(s string) bool {
-	u, err := url.Parse(s)
-	if err != nil {
-		log.Errorf("Error in parsing url: %v", err)
-	}
-	log.Infof("Parsed url: %v", u)
-	return err == nil && u.Scheme != "" && u.Host != ""
 }
 
 func getTemplateUrl(opsmxUrl string, sha1Code string, templateType string, templateName string) (string, error) {
@@ -103,4 +85,38 @@ func getTemplateUrl(opsmxUrl string, sha1Code string, templateType string, templ
 	values.Add("templateName", templateName)
 	urlParse.RawQuery = values.Encode()
 	return urlParse.String(), nil
+}
+
+func processScoreResponse(data []byte) (map[string]interface{}, error) {
+	var response map[string]interface{}
+	var reportUrlJson map[string]interface{}
+	var status map[string]interface{}
+	scoreResponseMap := make(map[string]interface{})
+
+	err := json.Unmarshal(data, &response)
+	if err != nil {
+		return scoreResponseMap, fmt.Errorf("analysis Error: Error in post processing canary Response: %v", err)
+	}
+	canaryResultBytes, err := json.MarshalIndent(response["canaryResult"], "", "   ")
+	if err != nil {
+		return scoreResponseMap, err
+	}
+	err = json.Unmarshal(canaryResultBytes, &reportUrlJson)
+	if err != nil {
+		return scoreResponseMap, err
+	}
+	statusBytes, err := json.MarshalIndent(response["status"], "", "   ")
+	if err != nil {
+		return scoreResponseMap, err
+	}
+	err = json.Unmarshal(statusBytes, &status)
+	if err != nil {
+		return scoreResponseMap, err
+	}
+
+	scoreResponseMap["canaryReportURL"] = reportUrlJson["canaryReportURL"]
+	scoreResponseMap["intervalNo"] = reportUrlJson["intervalNo"]
+	scoreResponseMap["status"] = status["status"]
+
+	return scoreResponseMap, nil
 }
