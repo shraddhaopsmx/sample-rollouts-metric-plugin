@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -138,7 +138,7 @@ func TestRun(t *testing.T) {
 			}
 			return &http.Response{
 				StatusCode: 200,
-				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				Body: io.NopCloser(bytes.NewBufferString(`
 				{
 					"canaryId": 53
 				}
@@ -194,7 +194,7 @@ func TestResume(t *testing.T) {
 		c := NewTestClient(func(req *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: 200,
-				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				Body: io.NopCloser(bytes.NewBufferString(`
 				{
 					"owner": "admin",
 					"application": "test-plugin",
@@ -234,7 +234,7 @@ func TestResume(t *testing.T) {
 		c := NewTestClient(func(req *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: 200,
-				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				Body: io.NopCloser(bytes.NewBufferString(`
 				{
 					"owner": "admin",
 					"application": "newapp",
@@ -267,7 +267,7 @@ func TestResume(t *testing.T) {
 		c := NewTestClient(func(req *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: 200,
-				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				Body: io.NopCloser(bytes.NewBufferString(`
 				{
 					"owner": "admin",
 					"application": "newapp",
@@ -300,7 +300,7 @@ func TestResume(t *testing.T) {
 		c := NewTestClient(func(req *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: 200,
-				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				Body: io.NopCloser(bytes.NewBufferString(`
 				{
 					"owner": "admin",
 					"application": "newapp",

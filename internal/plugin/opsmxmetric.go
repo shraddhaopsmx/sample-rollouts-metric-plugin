@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -458,7 +457,6 @@ func generateTemplateGitops(c *RpcPlugin, secret opsmxProfile, templateName stri
 		}
 	}
 
-	log.Info(string(templateFileData))
 	sha1Code := generateSHA1(string(templateFileData))
 	templateUrl, err := getTemplateUrl(secret.opsmxIsdUrl, sha1Code, templateType, templateName)
 	if err != nil {

@@ -2,7 +2,7 @@ package plugin
 
 import (
 	"bytes"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"testing"
 
@@ -430,8 +430,34 @@ func TestOpsmxMetricValidations(t *testing.T) {
 		assert.Contains(t, err.Error(), "missing metric Scope placeholder")
 	})
 
+	t.Run("serviceName exists more than once - an error should be raised", func(t *testing.T) {
+		opsmxMetric := OPSMXMetric{Application: "newapp",
+			LifetimeMinutes: 9,
+			Pass:            90,
+			Marginal:        85,
+			Services: []OPSMXService{
+				{
+					LogScopeVariables: "pod_name",
+					CanaryLogScope:    "podHashCanary",
+					BaselineLogScope:  "podHashBaseline",
+					LogTemplateName:   "logtemplate",
+					ServiceName:       "serviceName",
+				},
+				{
+					MetricScopeVariables: "pod_name",
+					BaselineMetricScope:  "podHashBaseline",
+					CanaryMetricScope:    "podHashCanary",
+					MetricTemplateName:   "metrictemplate",
+					ServiceName:          "serviceName",
+				},
+			}}
+		_, err := opsmxMetric.process(rpcPluginImp, opsmxProfileData, "ns")
+		assert.Contains(t, err.Error(), "serviceName 'serviceName' mentioned exists more than once")
+	})
+
 }
 
+// TODO: add one test with all the works
 func TestOpsmxMetricVariousFlows(t *testing.T) {
 	logCtx := *log.WithFields(log.Fields{"plugin-test": "opsmx"})
 	rpcPluginImp := &RpcPlugin{
@@ -525,7 +551,7 @@ func TestOpsmxMetricVariousFlows(t *testing.T) {
 			assert.Equal(t, "https://opsmx.test.tst/autopilot/api/v5/external/template?sha1=a5b311c084cebce5b2e40b388e2e11c6e397c970&templateName=metrictemplate&templateType=METRIC", req.URL.String())
 			return &http.Response{
 				StatusCode: 200,
-				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				Body: io.NopCloser(bytes.NewBufferString(`
 				true
 				`)),
 				Header: make(http.Header),
@@ -577,7 +603,7 @@ func TestOpsmxMetricVariousFlows(t *testing.T) {
 			if req.Method == "GET" {
 				return &http.Response{
 					StatusCode: 200,
-					Body: ioutil.NopCloser(bytes.NewBufferString(`
+					Body: io.NopCloser(bytes.NewBufferString(`
 				false
 				`)),
 					Header: make(http.Header),
@@ -585,7 +611,7 @@ func TestOpsmxMetricVariousFlows(t *testing.T) {
 			}
 			return &http.Response{
 				StatusCode: 200,
-				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				Body: io.NopCloser(bytes.NewBufferString(`
 			{
 				"status" :"CREATED"
 			}
@@ -640,7 +666,7 @@ func TestOpsmxMetricVariousFlows(t *testing.T) {
 			if req.Method == "GET" {
 				return &http.Response{
 					StatusCode: 200,
-					Body: ioutil.NopCloser(bytes.NewBufferString(`
+					Body: io.NopCloser(bytes.NewBufferString(`
 				false
 				`)),
 					Header: make(http.Header),
@@ -648,7 +674,7 @@ func TestOpsmxMetricVariousFlows(t *testing.T) {
 			}
 			return &http.Response{
 				StatusCode: 200,
-				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				Body: io.NopCloser(bytes.NewBufferString(`
 			{
 				"status" :"CREATED"
 			}
@@ -739,7 +765,7 @@ func TestOpsmxMetricVariousFlows(t *testing.T) {
 			if req.Method == "GET" {
 				return &http.Response{
 					StatusCode: 200,
-					Body: ioutil.NopCloser(bytes.NewBufferString(`
+					Body: io.NopCloser(bytes.NewBufferString(`
 				false
 				`)),
 					Header: make(http.Header),
@@ -747,7 +773,7 @@ func TestOpsmxMetricVariousFlows(t *testing.T) {
 			}
 			return &http.Response{
 				StatusCode: 200,
-				Body: ioutil.NopCloser(bytes.NewBufferString(`
+				Body: io.NopCloser(bytes.NewBufferString(`
 			{
 				"status" :"CREATED"
 			}
