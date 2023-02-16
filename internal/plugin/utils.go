@@ -3,12 +3,9 @@ package plugin
 import (
 	"crypto/sha1"
 	"encoding/hex"
-	"encoding/json"
-	"fmt"
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"strings"
 )
 
@@ -67,56 +64,4 @@ func generateSHA1(s string) string {
 	h.Write([]byte(s))
 	sha1_hash := hex.EncodeToString(h.Sum(nil))
 	return sha1_hash
-}
-
-func getTemplateUrl(opsmxUrl string, sha1Code string, templateType string, templateName string) (string, error) {
-	_url, err := url.JoinPath(opsmxUrl, templateApi)
-	if err != nil {
-		return "", err
-	}
-
-	urlParse, err := url.Parse(_url)
-	if err != nil {
-		return "", err
-	}
-	values := urlParse.Query()
-	values.Add("sha1", sha1Code)
-	values.Add("templateType", templateType)
-	values.Add("templateName", templateName)
-	urlParse.RawQuery = values.Encode()
-	return urlParse.String(), nil
-}
-
-func processScoreResponse(data []byte) (map[string]interface{}, error) {
-	var response map[string]interface{}
-	var reportUrlJson map[string]interface{}
-	var status map[string]interface{}
-	scoreResponseMap := make(map[string]interface{})
-
-	err := json.Unmarshal(data, &response)
-	if err != nil {
-		return scoreResponseMap, fmt.Errorf("analysis Error: Error in post processing canary Response: %v", err)
-	}
-	canaryResultBytes, err := json.MarshalIndent(response["canaryResult"], "", "   ")
-	if err != nil {
-		return scoreResponseMap, err
-	}
-	err = json.Unmarshal(canaryResultBytes, &reportUrlJson)
-	if err != nil {
-		return scoreResponseMap, err
-	}
-	statusBytes, err := json.MarshalIndent(response["status"], "", "   ")
-	if err != nil {
-		return scoreResponseMap, err
-	}
-	err = json.Unmarshal(statusBytes, &status)
-	if err != nil {
-		return scoreResponseMap, err
-	}
-
-	scoreResponseMap["canaryReportURL"] = reportUrlJson["canaryReportURL"]
-	scoreResponseMap["intervalNo"] = reportUrlJson["intervalNo"]
-	scoreResponseMap["status"] = status["status"]
-
-	return scoreResponseMap, nil
 }

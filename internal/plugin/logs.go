@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
 )
 
@@ -193,7 +192,6 @@ func processYamlLogs(templateFileData []byte, template string, ScopeVariables st
 	}
 
 	if !logdata.DisableDefaultsErrorTopics {
-		log.Info("loading defaults tags for log template")
 		for _, items := range defaults.ErrorTopics {
 			if !isExists(errorStringsAvailable, items.ErrorStrings) {
 				logdata.ErrorTopics = append(logdata.ErrorTopics, items)

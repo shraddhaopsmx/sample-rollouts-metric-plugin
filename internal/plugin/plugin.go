@@ -128,51 +128,6 @@ func (g *RpcPlugin) Run(analysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metri
 	return newMeasurement
 }
 
-func processResume(data []byte, metric OPSMXMetric, measurement v1alpha1.Measurement) v1alpha1.Measurement {
-	var (
-		canaryScore string
-		result      map[string]interface{}
-		finalScore  map[string]interface{}
-	)
-
-	err := json.Unmarshal(data, &result)
-	if err != nil {
-		err := fmt.Errorf("analysis Error: Error in post processing canary Response. Error: %v", err)
-		return metricutil.MarkMeasurementError(measurement, err)
-	}
-	jsonBytes, _ := json.MarshalIndent(result["canaryResult"], "", "   ")
-	err = json.Unmarshal(jsonBytes, &finalScore)
-	if err != nil {
-		return metricutil.MarkMeasurementError(measurement, err)
-	}
-	if finalScore["overallScore"] == nil {
-		canaryScore = "0"
-	} else {
-		canaryScore = fmt.Sprintf("%v", finalScore["overallScore"])
-	}
-
-	var score int
-	if strings.Contains(canaryScore, ".") {
-		floatScore, err := strconv.ParseFloat(canaryScore, 64)
-		if err != nil {
-			return metricutil.MarkMeasurementError(measurement, err)
-		}
-		score = int(roundFloat(floatScore, 0))
-	} else {
-		score, err = strconv.Atoi(canaryScore)
-		if err != nil {
-			return metricutil.MarkMeasurementError(measurement, err)
-		}
-	}
-
-	measurement.Value = canaryScore
-	measurement.Phase = evaluateResult(score, metric.Pass, metric.Marginal)
-	if measurement.Phase == "Failed" && metric.LookBackType != "" {
-		measurement.Metadata["interval analysis message"] = fmt.Sprintf("Interval Analysis Failed at intervalNo. %s", measurement.Metadata["Current intervalNo"])
-	}
-	return measurement
-}
-
 func (g *RpcPlugin) Resume(analysisRun *v1alpha1.AnalysisRun, metric v1alpha1.Metric, measurement v1alpha1.Measurement) v1alpha1.Measurement {
 	OPSMXMetric := OPSMXMetric{}
 	if err := json.Unmarshal(metric.Provider.Plugin[opsmxPlugin], &OPSMXMetric); err != nil {
@@ -253,6 +208,84 @@ func evaluateResult(score int, pass int, marginal int) v1alpha1.AnalysisPhase {
 		return v1alpha1.AnalysisPhaseInconclusive
 	}
 	return v1alpha1.AnalysisPhaseFailed
+}
+
+func processScoreResponse(data []byte) (map[string]interface{}, error) {
+	var response map[string]interface{}
+	var reportUrlJson map[string]interface{}
+	var status map[string]interface{}
+	scoreResponseMap := make(map[string]interface{})
+
+	err := json.Unmarshal(data, &response)
+	if err != nil {
+		return scoreResponseMap, fmt.Errorf("analysis Error: Error in post processing canary Response: %v", err)
+	}
+	canaryResultBytes, err := json.MarshalIndent(response["canaryResult"], "", "   ")
+	if err != nil {
+		return scoreResponseMap, err
+	}
+	err = json.Unmarshal(canaryResultBytes, &reportUrlJson)
+	if err != nil {
+		return scoreResponseMap, err
+	}
+	statusBytes, err := json.MarshalIndent(response["status"], "", "   ")
+	if err != nil {
+		return scoreResponseMap, err
+	}
+	err = json.Unmarshal(statusBytes, &status)
+	if err != nil {
+		return scoreResponseMap, err
+	}
+
+	scoreResponseMap["canaryReportURL"] = reportUrlJson["canaryReportURL"]
+	scoreResponseMap["intervalNo"] = reportUrlJson["intervalNo"]
+	scoreResponseMap["status"] = status["status"]
+
+	return scoreResponseMap, nil
+}
+
+func processResume(data []byte, metric OPSMXMetric, measurement v1alpha1.Measurement) v1alpha1.Measurement {
+	var (
+		canaryScore string
+		result      map[string]interface{}
+		finalScore  map[string]interface{}
+	)
+
+	err := json.Unmarshal(data, &result)
+	if err != nil {
+		err := fmt.Errorf("analysis Error: Error in post processing canary Response. Error: %v", err)
+		return metricutil.MarkMeasurementError(measurement, err)
+	}
+	jsonBytes, _ := json.MarshalIndent(result["canaryResult"], "", "   ")
+	err = json.Unmarshal(jsonBytes, &finalScore)
+	if err != nil {
+		return metricutil.MarkMeasurementError(measurement, err)
+	}
+	if finalScore["overallScore"] == nil {
+		canaryScore = "0"
+	} else {
+		canaryScore = fmt.Sprintf("%v", finalScore["overallScore"])
+	}
+
+	var score int
+	if strings.Contains(canaryScore, ".") {
+		floatScore, err := strconv.ParseFloat(canaryScore, 64)
+		if err != nil {
+			return metricutil.MarkMeasurementError(measurement, err)
+		}
+		score = int(roundFloat(floatScore, 0))
+	} else {
+		score, err = strconv.Atoi(canaryScore)
+		if err != nil {
+			return metricutil.MarkMeasurementError(measurement, err)
+		}
+	}
+	measurement.Value = canaryScore
+	measurement.Phase = evaluateResult(score, metric.Pass, metric.Marginal)
+	if measurement.Phase == "Failed" && metric.LookBackType != "" {
+		measurement.Metadata["interval analysis message"] = fmt.Sprintf("Interval Analysis Failed at intervalNo. %s", measurement.Metadata["Current intervalNo"])
+	}
+	return measurement
 }
 
 func getSecretData(g *RpcPlugin, metric OPSMXMetric, namespace string) (opsmxProfile, error) {
